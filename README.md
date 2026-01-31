@@ -47,7 +47,13 @@ This separation allows the same validated configuration to be applied consistent
 ### Installation
 
 ```shell
-curl -sfL https://raw.githubusercontent.com/nvidia/eidos/refs/heads/main/install | bash -s --
+# Public repository
+curl -sfL https://raw.githubusercontent.com/NVIDIA/eidos/main/install | bash -s --
+
+# Private repository (requires GitHub token with repo scope)
+export GITHUB_TOKEN="your_github_token"
+curl -sfL -H "Authorization: token $GITHUB_TOKEN" \
+  https://raw.githubusercontent.com/NVIDIA/eidos/main/install | bash -s --
 ```
 
 See [Installation Guide](docs/user-guide/installation.md) for manual installation, building from source, and container images.
