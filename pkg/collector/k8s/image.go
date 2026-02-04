@@ -16,10 +16,10 @@ package k8s
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strings"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/measurement"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,7 +29,7 @@ import (
 func (k *Collector) collectContainerImages(ctx context.Context) (map[string]measurement.Reading, error) {
 	pods, err := k.ClientSet.CoreV1().Pods("").List(ctx, v1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list pods: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to list pods", err)
 	}
 
 	// Track unique images (map of image name to version)

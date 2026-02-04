@@ -176,7 +176,7 @@ func NewLayeredDataProvider(embedded *EmbeddedDataProvider, config LayeredProvid
 		// Get relative path
 		relPath, relErr := filepath.Rel(config.ExternalDir, path)
 		if relErr != nil {
-			return fmt.Errorf("failed to get relative path: %w", relErr)
+			return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to get relative path", relErr)
 		}
 
 		// Check for path traversal
@@ -189,7 +189,7 @@ func NewLayeredDataProvider(embedded *EmbeddedDataProvider, config LayeredProvid
 		if !config.AllowSymlinks {
 			info, lstatErr := os.Lstat(path)
 			if lstatErr != nil {
-				return fmt.Errorf("failed to stat file: %w", lstatErr)
+				return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to stat file", lstatErr)
 			}
 			if info.Mode()&os.ModeSymlink != 0 {
 				return eidoserrors.New(eidoserrors.ErrCodeInvalidRequest,
@@ -200,7 +200,7 @@ func NewLayeredDataProvider(embedded *EmbeddedDataProvider, config LayeredProvid
 		// Check file size
 		info, statErr := d.Info()
 		if statErr != nil {
-			return fmt.Errorf("failed to get file info: %w", statErr)
+			return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to get file info", statErr)
 		}
 		if info.Size() > config.MaxFileSize {
 			return eidoserrors.New(eidoserrors.ErrCodeInvalidRequest,
@@ -250,7 +250,7 @@ func (p *LayeredDataProvider) ReadFile(path string) ([]byte, error) {
 		externalPath := filepath.Join(p.externalDir, path)
 		data, err := os.ReadFile(externalPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read external file %s: %w", path, err)
+			return nil, eidoserrors.Wrap(eidoserrors.ErrCodeInternal, fmt.Sprintf("failed to read external file %s", path), err)
 		}
 		slog.Debug("read from external data directory", "path", path)
 		return data, nil
@@ -345,13 +345,13 @@ func (p *LayeredDataProvider) getMergedRegistry() ([]byte, error) {
 	// Load embedded registry
 	embeddedData, err := p.embedded.ReadFile(registryFileName)
 	if err != nil {
-		p.mergedRegistryErr = fmt.Errorf("failed to read embedded registry: %w", err)
+		p.mergedRegistryErr = eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to read embedded registry", err)
 		return nil, p.mergedRegistryErr
 	}
 
 	var embeddedReg ComponentRegistry
 	if unmarshalErr := yaml.Unmarshal(embeddedData, &embeddedReg); unmarshalErr != nil {
-		p.mergedRegistryErr = fmt.Errorf("failed to parse embedded registry: %w", unmarshalErr)
+		p.mergedRegistryErr = eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to parse embedded registry", unmarshalErr)
 		return nil, p.mergedRegistryErr
 	}
 
@@ -359,13 +359,13 @@ func (p *LayeredDataProvider) getMergedRegistry() ([]byte, error) {
 	externalPath := filepath.Join(p.externalDir, registryFileName)
 	externalData, err := os.ReadFile(externalPath)
 	if err != nil {
-		p.mergedRegistryErr = fmt.Errorf("failed to read external registry: %w", err)
+		p.mergedRegistryErr = eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to read external registry", err)
 		return nil, p.mergedRegistryErr
 	}
 
 	var externalReg ComponentRegistry
 	if unmarshalErr := yaml.Unmarshal(externalData, &externalReg); unmarshalErr != nil {
-		p.mergedRegistryErr = fmt.Errorf("failed to parse external registry: %w", unmarshalErr)
+		p.mergedRegistryErr = eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to parse external registry", unmarshalErr)
 		return nil, p.mergedRegistryErr
 	}
 
@@ -382,7 +382,7 @@ func (p *LayeredDataProvider) getMergedRegistry() ([]byte, error) {
 	// Serialize merged registry
 	p.mergedRegistry, p.mergedRegistryErr = yaml.Marshal(merged)
 	if p.mergedRegistryErr != nil {
-		return nil, fmt.Errorf("failed to serialize merged registry: %w", p.mergedRegistryErr)
+		return nil, eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to serialize merged registry", p.mergedRegistryErr)
 	}
 
 	slog.Info("merged component registries",

@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/NVIDIA/eidos/pkg/errors"
 )
 
 // StdoutSerializer is a serializer that outputs snapshot data to stdout in JSON format.
@@ -43,7 +45,7 @@ type StdoutSerializer struct {
 func (s *StdoutSerializer) Serialize(_ context.Context, snapshot any) error {
 	j, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to serialize to json: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to serialize to json", err)
 	}
 
 	fmt.Println(string(j))

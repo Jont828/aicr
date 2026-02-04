@@ -265,17 +265,17 @@ func (g *Generator) Generate(ctx context.Context, input *GeneratorInput, outputD
 func (g *Generator) generateFromTemplate(tmplContent string, data any, outputPath string) (int64, error) {
 	tmpl, err := template.New("template").Parse(tmplContent)
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse template: %w", err)
+		return 0, errors.Wrap(errors.ErrCodeInternal, "failed to parse template", err)
 	}
 
 	var buf strings.Builder
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return 0, fmt.Errorf("failed to execute template: %w", err)
+		return 0, errors.Wrap(errors.ErrCodeInternal, "failed to execute template", err)
 	}
 
 	content := buf.String()
 	if err := os.WriteFile(outputPath, []byte(content), 0600); err != nil {
-		return 0, fmt.Errorf("failed to write file: %w", err)
+		return 0, errors.Wrap(errors.ErrCodeInternal, "failed to write file", err)
 	}
 
 	return int64(len(content)), nil
@@ -290,14 +290,14 @@ func (g *Generator) writeValuesFile(values map[string]any, outputPath string) (i
 	if len(values) > 0 {
 		yamlBytes, err := yaml.Marshal(values)
 		if err != nil {
-			return 0, fmt.Errorf("failed to marshal values: %w", err)
+			return 0, errors.Wrap(errors.ErrCodeInternal, "failed to marshal values", err)
 		}
 		buf.Write(yamlBytes)
 	}
 
 	content := buf.String()
 	if err := os.WriteFile(outputPath, []byte(content), 0600); err != nil {
-		return 0, fmt.Errorf("failed to write file: %w", err)
+		return 0, errors.Wrap(errors.ErrCodeInternal, "failed to write values file", err)
 	}
 
 	return int64(len(content)), nil

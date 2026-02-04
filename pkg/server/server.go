@@ -194,7 +194,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Wait for completion or error
 	if err := g.Wait(); err != nil {
-		return fmt.Errorf("server error: %w", err)
+		return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "server error", err)
 	}
 
 	slog.Debug("server stopped gracefully")

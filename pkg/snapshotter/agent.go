@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/k8s/agent"
 	k8sclient "github.com/NVIDIA/eidos/pkg/k8s/client"
 	"github.com/NVIDIA/eidos/pkg/serializer"
@@ -87,7 +88,7 @@ func ParseNodeSelectors(selectors []string) (map[string]string, error) {
 	for _, s := range selectors {
 		parts := strings.SplitN(s, "=", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid format %q, expected key=value", s)
+			return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid format %q, expected key=value", s))
 		}
 		result[parts[0]] = parts[1]
 	}
@@ -120,7 +121,7 @@ func ParseTolerations(tolerations []string) ([]corev1.Toleration, error) {
 		// Split by colon to get effect
 		parts := strings.Split(t, ":")
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid format %q, expected key=value:effect or key:effect", t)
+			return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid format %q, expected key=value:effect or key:effect", t))
 		}
 		effect = parts[1]
 
@@ -165,7 +166,7 @@ func (n *NodeSnapshotter) measureWithAgent(ctx context.Context) error {
 		clientset, _, err = k8sclient.GetKubeClient()
 	}
 	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to create Kubernetes client", err)
 	}
 
 	// Default output to ConfigMap if not specified
@@ -221,7 +222,7 @@ func (n *NodeSnapshotter) measureWithAgent(ctx context.Context) error {
 
 	// Deploy RBAC and Job
 	if deployErr := deployer.Deploy(ctx); deployErr != nil {
-		return fmt.Errorf("failed to deploy agent: %w", deployErr)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to deploy agent", deployErr)
 	}
 
 	slog.Info("agent deployed successfully")
@@ -262,7 +263,7 @@ func (n *NodeSnapshotter) measureWithAgent(ctx context.Context) error {
 			fmt.Fprintln(logWriter(), logs)
 			fmt.Fprintln(logWriter(), "--- end logs ---")
 		}
-		return fmt.Errorf("job failed: %w", waitErr)
+		return errors.Wrap(errors.ErrCodeInternal, "job failed", waitErr)
 	}
 
 	slog.Info("job completed successfully")
@@ -271,7 +272,7 @@ func (n *NodeSnapshotter) measureWithAgent(ctx context.Context) error {
 	slog.Debug("retrieving snapshot from ConfigMap")
 	snapshotData, err := deployer.GetSnapshot(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to retrieve snapshot: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to retrieve snapshot", err)
 	}
 
 	// Write snapshot to additional destinations if needed
@@ -285,7 +286,7 @@ func (n *NodeSnapshotter) measureWithAgent(ctx context.Context) error {
 	default:
 		// Write to file (in addition to ConfigMap)
 		if err := serializer.WriteToFile(output, snapshotData); err != nil {
-			return fmt.Errorf("failed to write snapshot to file: %w", err)
+			return errors.Wrap(errors.ErrCodeInternal, "failed to write snapshot to file", err)
 		}
 		slog.Info("snapshot saved to file", slog.String("path", output))
 	}

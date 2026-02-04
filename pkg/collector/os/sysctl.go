@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/NVIDIA/eidos/pkg/collector/file"
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/measurement"
 )
 
@@ -45,7 +46,7 @@ func (c *Collector) collectSysctl(ctx context.Context) (*measurement.Subtype, er
 
 	err := filepath.WalkDir(sysctlRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return fmt.Errorf("failed to walk directory %s: %w", path, err)
+			return errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to walk directory %s", path), err)
 		}
 
 		// Check if context is canceled
@@ -64,7 +65,7 @@ func (c *Collector) collectSysctl(ctx context.Context) (*measurement.Subtype, er
 
 		// Ensure path is under root (defense in depth)
 		if !strings.HasPrefix(path, sysctlRoot) {
-			return fmt.Errorf("path traversal detected: %s", path)
+			return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("path traversal detected: %s", path))
 		}
 
 		// Exclude network parameters
@@ -96,7 +97,7 @@ func (c *Collector) collectSysctl(ctx context.Context) (*measurement.Subtype, er
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to collect sysctl parameters: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to collect sysctl parameters", err)
 	}
 
 	res := &measurement.Subtype{

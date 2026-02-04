@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/k8s/client"
 	"gopkg.in/yaml.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -90,11 +91,11 @@ type Reader struct {
 //	err = reader.Deserialize(&data)
 func NewReader(format Format, input io.Reader) (*Reader, error) {
 	if format.IsUnknown() {
-		return nil, fmt.Errorf("unknown format: %s", format)
+		return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("unknown format: %s", format))
 	}
 
 	if format == FormatTable {
-		return nil, fmt.Errorf("table format does not support deserialization")
+		return nil, errors.New(errors.ErrCodeInvalidRequest, "table format does not support deserialization")
 	}
 
 	r := &Reader{
@@ -137,11 +138,11 @@ func NewReader(format Format, input io.Reader) (*Reader, error) {
 //	defer reader.Close()
 func NewFileReader(format Format, filePath string) (*Reader, error) {
 	if format.IsUnknown() {
-		return nil, fmt.Errorf("unknown format: %s", format)
+		return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("unknown format: %s", format))
 	}
 
 	if format == FormatTable {
-		return nil, fmt.Errorf("table format does not support deserialization")
+		return nil, errors.New(errors.ErrCodeInvalidRequest, "table format does not support deserialization")
 	}
 
 	// If the filePath is a URL or special scheme, handle accordingly
@@ -151,9 +152,9 @@ func NewFileReader(format Format, filePath string) (*Reader, error) {
 	if strings.HasPrefix(filePath, "http://") || strings.HasPrefix(filePath, "https://") {
 		name := fmt.Sprintf("eidos-%d.tmp", time.Now().UnixNano())
 		tempFilePath := filepath.Join(os.TempDir(), name)
-		httpReader := NewHttpReader()
+		httpReader := NewHTTPReader()
 		if err = httpReader.Download(filePath, tempFilePath); err != nil {
-			return nil, fmt.Errorf("failed to download remote file: %w", err)
+			return nil, errors.Wrap(errors.ErrCodeInternal, "failed to download remote file", err)
 		}
 		file, err = os.Open(tempFilePath)
 	} else {
@@ -162,7 +163,7 @@ func NewFileReader(format Format, filePath string) (*Reader, error) {
 
 	// Handle file open error
 	if err != nil {
-		return nil, fmt.Errorf("failed to open file: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to open file", err)
 	}
 
 	// Create Reader
@@ -212,33 +213,33 @@ func NewFileReaderAuto(filePath string) (*Reader, error) {
 //	err := reader.Deserialize(&config)
 func (r *Reader) Deserialize(v any) error {
 	if r == nil {
-		return fmt.Errorf("reader is nil")
+		return errors.New(errors.ErrCodeInvalidRequest, "reader is nil")
 	}
 
 	if r.input == nil {
-		return fmt.Errorf("input source is nil")
+		return errors.New(errors.ErrCodeInvalidRequest, "input source is nil")
 	}
 
 	switch r.format {
 	case FormatJSON:
 		decoder := json.NewDecoder(r.input)
 		if err := decoder.Decode(v); err != nil {
-			return fmt.Errorf("failed to decode JSON: %w", err)
+			return errors.Wrap(errors.ErrCodeInvalidRequest, "failed to decode JSON", err)
 		}
 		return nil
 
 	case FormatYAML:
 		decoder := yaml.NewDecoder(r.input)
 		if err := decoder.Decode(v); err != nil {
-			return fmt.Errorf("failed to decode YAML: %w", err)
+			return errors.Wrap(errors.ErrCodeInvalidRequest, "failed to decode YAML", err)
 		}
 		return nil
 
 	case FormatTable:
-		return fmt.Errorf("table format is not supported for deserialization")
+		return errors.New(errors.ErrCodeInvalidRequest, "table format is not supported for deserialization")
 
 	default:
-		return fmt.Errorf("unsupported format for deserialization: %s", r.format)
+		return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("unsupported format for deserialization: %s", r.format))
 	}
 }
 
@@ -341,7 +342,7 @@ func FromFileWithKubeconfig[T any](path, kubeconfig string) (*T, error) {
 	if strings.HasPrefix(path, ConfigMapURIScheme) {
 		namespace, name, err := parseConfigMapURI(path)
 		if err != nil {
-			return nil, fmt.Errorf("invalid ConfigMap URI: %w", err)
+			return nil, errors.Wrap(errors.ErrCodeInvalidRequest, "invalid ConfigMap URI", err)
 		}
 		return fromConfigMapWithKubeconfig[T](namespace, name, kubeconfig)
 	}
@@ -355,12 +356,12 @@ func FromFileWithKubeconfig[T any](path, kubeconfig string) (*T, error) {
 	ser, err := NewFileReader(fileFormat, path)
 	if err != nil {
 		slog.Error("failed to create file reader", "error", err, "path", path, "format", fileFormat)
-		return nil, fmt.Errorf("failed to create serializer for %q: %w", path, err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to create serializer for %q", path), err)
 	}
 
 	if ser == nil {
 		slog.Error("reader is unexpectedly nil despite no error")
-		return nil, fmt.Errorf("reader is nil for %q", path)
+		return nil, errors.New(errors.ErrCodeInternal, fmt.Sprintf("reader is nil for %q", path))
 	}
 
 	defer func() {
@@ -373,7 +374,7 @@ func FromFileWithKubeconfig[T any](path, kubeconfig string) (*T, error) {
 
 	var r T
 	if err := ser.Deserialize(&r); err != nil {
-		return nil, fmt.Errorf("failed to deserialize object from %q: %w", path, err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to deserialize object from %q", path), err)
 	}
 
 	slog.Debug("successfully loaded object from file",
@@ -394,13 +395,13 @@ func fromConfigMapWithKubeconfig[T any](namespace, name, kubeconfig string) (*T,
 		k8sClient, _, err = client.GetKubeClient()
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get kubernetes client: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to get kubernetes client", err)
 	}
 
 	ctx := context.Background()
 	cm, err := k8sClient.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get ConfigMap %s/%s: %w", namespace, name, err)
+		return nil, errors.Wrap(errors.ErrCodeNotFound, fmt.Sprintf("failed to get ConfigMap %s/%s", namespace, name), err)
 	}
 
 	// Try to get format from ConfigMap metadata
@@ -424,7 +425,7 @@ func fromConfigMapWithKubeconfig[T any](namespace, name, kubeconfig string) (*T,
 			}
 		}
 		if content == "" {
-			return nil, fmt.Errorf("ConfigMap %s/%s has no snapshot data", namespace, name)
+			return nil, errors.New(errors.ErrCodeNotFound, fmt.Sprintf("ConfigMap %s/%s has no snapshot data", namespace, name))
 		}
 	}
 
@@ -437,12 +438,12 @@ func fromConfigMapWithKubeconfig[T any](namespace, name, kubeconfig string) (*T,
 	// Deserialize content
 	reader, err := NewReader(format, strings.NewReader(content))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create reader for ConfigMap data: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to create reader for ConfigMap data", err)
 	}
 
 	var result T
 	if err := reader.Deserialize(&result); err != nil {
-		return nil, fmt.Errorf("failed to deserialize ConfigMap data: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to deserialize ConfigMap data", err)
 	}
 
 	return &result, nil

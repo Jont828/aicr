@@ -17,6 +17,7 @@ package k8s
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/NVIDIA/eidos/pkg/measurement"
 	"github.com/stretchr/testify/assert"
@@ -71,6 +72,39 @@ func TestKubernetesCollector_CollectWithCanceledContext(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, m)
 	assert.Equal(t, context.Canceled, err)
+}
+
+func TestKubernetesCollector_CollectWithTimeout(t *testing.T) {
+	// Create a context with very short timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	defer cancel()
+
+	// Wait for context to timeout
+	time.Sleep(10 * time.Millisecond)
+
+	collector := createTestCollector()
+	m, err := collector.Collect(ctx)
+
+	// Should fail with deadline exceeded
+	assert.Error(t, err)
+	assert.Nil(t, m)
+	assert.Equal(t, context.DeadlineExceeded, err)
+}
+
+func TestKubernetesCollector_ErrorRecovery_NilClient(t *testing.T) {
+	ctx := context.TODO()
+
+	// Create collector without a valid client
+	collector := &Collector{
+		ClientSet:  nil,
+		RestConfig: nil,
+	}
+
+	m, err := collector.Collect(ctx)
+
+	// Should fail gracefully when client is unavailable
+	assert.Error(t, err)
+	assert.Nil(t, m)
 }
 
 // Helper function defined in image_test.go

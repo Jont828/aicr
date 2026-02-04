@@ -16,13 +16,13 @@ package snapshotter
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/NVIDIA/eidos/pkg/collector"
 	"github.com/NVIDIA/eidos/pkg/collector/k8s"
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/header"
 	"github.com/NVIDIA/eidos/pkg/measurement"
 	"github.com/NVIDIA/eidos/pkg/serializer"
@@ -117,7 +117,7 @@ func (n *NodeSnapshotter) measure(ctx context.Context) error {
 		k8sResources, err := kc.Collect(gctx)
 		if err != nil {
 			slog.Error("failed to collect kubernetes resources", slog.String("error", err.Error()))
-			return fmt.Errorf("failed to collect kubernetes resources: %w", err)
+			return errors.Wrap(errors.ErrCodeInternal, "failed to collect kubernetes resources", err)
 		}
 		mu.Lock()
 		snap.Measurements = append(snap.Measurements, k8sResources)
@@ -136,7 +136,7 @@ func (n *NodeSnapshotter) measure(ctx context.Context) error {
 		systemd, err := sd.Collect(gctx)
 		if err != nil {
 			slog.Error("failed to collect systemd", slog.String("error", err.Error()))
-			return fmt.Errorf("failed to collect systemd info: %w", err)
+			return errors.Wrap(errors.ErrCodeInternal, "failed to collect systemd info", err)
 		}
 		mu.Lock()
 		snap.Measurements = append(snap.Measurements, systemd)
@@ -155,7 +155,7 @@ func (n *NodeSnapshotter) measure(ctx context.Context) error {
 		grub, err := oc.Collect(gctx)
 		if err != nil {
 			slog.Error("failed to collect OS", slog.String("error", err.Error()))
-			return fmt.Errorf("failed to collect OS info: %w", err)
+			return errors.Wrap(errors.ErrCodeInternal, "failed to collect OS info", err)
 		}
 		mu.Lock()
 		snap.Measurements = append(snap.Measurements, grub)
@@ -174,7 +174,7 @@ func (n *NodeSnapshotter) measure(ctx context.Context) error {
 		smiConfigs, err := smi.Collect(gctx)
 		if err != nil {
 			slog.Error("failed to collect GPU", slog.String("error", err.Error()))
-			return fmt.Errorf("failed to collect SMI info: %w", err)
+			return errors.Wrap(errors.ErrCodeInternal, "failed to collect GPU info", err)
 		}
 		mu.Lock()
 		snap.Measurements = append(snap.Measurements, smiConfigs)
@@ -200,7 +200,7 @@ func (n *NodeSnapshotter) measure(ctx context.Context) error {
 
 	if err := n.Serializer.Serialize(ctx, snap); err != nil {
 		slog.Error("failed to serialize", slog.String("error", err.Error()))
-		return fmt.Errorf("failed to serialize: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to serialize snapshot", err)
 	}
 
 	return nil

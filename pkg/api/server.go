@@ -16,11 +16,11 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/NVIDIA/eidos/pkg/bundler"
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/logging"
 	"github.com/NVIDIA/eidos/pkg/recipe"
 	"github.com/NVIDIA/eidos/pkg/server"
@@ -56,7 +56,7 @@ func Serve() error {
 	// Parse allowlists from environment variables
 	allowLists, err := recipe.ParseAllowListsFromEnv()
 	if err != nil {
-		return fmt.Errorf("failed to parse allowlists from environment: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to parse allowlists from environment", err)
 	}
 
 	if allowLists != nil {
@@ -85,7 +85,7 @@ func Serve() error {
 		bundler.WithAllowLists(allowLists),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create bundler: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to create bundler", err)
 	}
 
 	r := map[string]http.HandlerFunc{

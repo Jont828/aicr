@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/NVIDIA/eidos/pkg/collector/file"
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/measurement"
 )
 
@@ -48,7 +49,7 @@ func (c *Collector) collectGRUB(ctx context.Context) (*measurement.Subtype, erro
 
 	params, err := parser.GetMap(filePathGrub)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read GRUB params from %s: %w", filePathGrub, err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to read GRUB params from %s", filePathGrub), err)
 	}
 
 	props := make(map[string]measurement.Reading, 0)

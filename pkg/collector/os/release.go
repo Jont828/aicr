@@ -20,6 +20,7 @@ import (
 	"os"
 
 	"github.com/NVIDIA/eidos/pkg/collector/file"
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/measurement"
 )
 
@@ -64,7 +65,7 @@ func (c *Collector) collectRelease(ctx context.Context) (*measurement.Subtype, e
 
 	params, err := parser.GetMap(root)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read os release from %s: %w", root, err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to read os release from %s", root), err)
 	}
 
 	// Pre-allocate with typical capacity (most files have 10-15 fields)

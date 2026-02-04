@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/measurement"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,7 +36,7 @@ func (k *Collector) collectClusterPolicies(ctx context.Context) (map[string]meas
 	// Create dynamic client
 	dynamicClient, err := dynamic.NewForConfig(k.RestConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to create dynamic client", err)
 	}
 
 	// Discover all API resources

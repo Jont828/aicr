@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,7 +42,7 @@ func (d *Deployer) waitForJobCompletion(ctx context.Context, timeout time.Durati
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to watch Job: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to watch Job", err)
 	}
 	defer watcher.Stop()
 
@@ -52,15 +53,15 @@ func (d *Deployer) waitForJobCompletion(ctx context.Context, timeout time.Durati
 	for {
 		select {
 		case <-timeoutCtx.Done():
-			return fmt.Errorf("timeout waiting for Job completion after %v", timeout)
+			return errors.New(errors.ErrCodeTimeout, fmt.Sprintf("timeout waiting for Job completion after %v", timeout))
 
 		case event, ok := <-watcher.ResultChan():
 			if !ok {
-				return fmt.Errorf("watch channel closed unexpectedly")
+				return errors.New(errors.ErrCodeInternal, "watch channel closed unexpectedly")
 			}
 
 			if event.Type == watch.Error {
-				return fmt.Errorf("watch error: %v", event.Object)
+				return errors.New(errors.ErrCodeInternal, fmt.Sprintf("watch error: %v", event.Object))
 			}
 
 			job, ok := event.Object.(*batchv1.Job)
@@ -74,7 +75,7 @@ func (d *Deployer) waitForJobCompletion(ctx context.Context, timeout time.Durati
 					return nil // Job completed successfully
 				}
 				if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
-					return fmt.Errorf("job failed: %s", condition.Message)
+					return errors.New(errors.ErrCodeInternal, fmt.Sprintf("job failed: %s", condition.Message))
 				}
 			}
 		}
@@ -86,19 +87,19 @@ func (d *Deployer) getSnapshotFromConfigMap(ctx context.Context) ([]byte, error)
 	// Parse ConfigMap name from output URI
 	namespace, name, err := parseConfigMapName(d.config.Output)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse ConfigMap URI: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInvalidRequest, "failed to parse ConfigMap URI", err)
 	}
 
 	// Get ConfigMap
 	cm, err := d.clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get ConfigMap %s/%s: %w", namespace, name, err)
+		return nil, errors.Wrap(errors.ErrCodeNotFound, fmt.Sprintf("failed to get ConfigMap %s/%s", namespace, name), err)
 	}
 
 	// Extract snapshot data
 	snapshot, ok := cm.Data["snapshot.yaml"]
 	if !ok {
-		return nil, fmt.Errorf("ConfigMap %s/%s does not contain 'snapshot.yaml' key", namespace, name)
+		return nil, errors.New(errors.ErrCodeNotFound, fmt.Sprintf("ConfigMap %s/%s does not contain 'snapshot.yaml' key", namespace, name))
 	}
 
 	return []byte(snapshot), nil
@@ -110,7 +111,7 @@ func (d *Deployer) getSnapshotFromConfigMap(ctx context.Context) ([]byte, error)
 func (d *Deployer) deleteConfigMap(ctx context.Context) error {
 	namespace, name, err := parseConfigMapName(d.config.Output)
 	if err != nil {
-		return fmt.Errorf("failed to parse ConfigMap URI: %w", err)
+		return errors.Wrap(errors.ErrCodeInvalidRequest, "failed to parse ConfigMap URI", err)
 	}
 
 	err = d.clientset.CoreV1().ConfigMaps(namespace).Delete(ctx, name, metav1.DeleteOptions{})
@@ -126,11 +127,11 @@ func (d *Deployer) StreamLogs(ctx context.Context, w io.Writer, prefix string) e
 		LabelSelector: "app.kubernetes.io/name=eidos",
 	})
 	if err != nil {
-		return fmt.Errorf("failed to list Pods: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to list Pods", err)
 	}
 
 	if len(pods.Items) == 0 {
-		return fmt.Errorf("no Pods found for Job %s", d.config.JobName)
+		return errors.New(errors.ErrCodeNotFound, fmt.Sprintf("no Pods found for Job %s", d.config.JobName))
 	}
 
 	// Get logs from first Pod with Follow=true
@@ -141,7 +142,7 @@ func (d *Deployer) StreamLogs(ctx context.Context, w io.Writer, prefix string) e
 
 	logs, err := req.Stream(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to stream logs: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to stream logs", err)
 	}
 	defer logs.Close()
 
@@ -170,11 +171,11 @@ func (d *Deployer) GetPodLogs(ctx context.Context) (string, error) {
 		LabelSelector: "app.kubernetes.io/name=eidos",
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to list Pods: %w", err)
+		return "", errors.Wrap(errors.ErrCodeInternal, "failed to list Pods", err)
 	}
 
 	if len(pods.Items) == 0 {
-		return "", fmt.Errorf("no Pods found for Job %s", d.config.JobName)
+		return "", errors.New(errors.ErrCodeNotFound, fmt.Sprintf("no Pods found for Job %s", d.config.JobName))
 	}
 
 	// Get logs from first Pod (there should only be one)
@@ -183,13 +184,13 @@ func (d *Deployer) GetPodLogs(ctx context.Context) (string, error) {
 
 	logs, err := req.Stream(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to stream logs: %w", err)
+		return "", errors.Wrap(errors.ErrCodeInternal, "failed to stream logs", err)
 	}
 	defer logs.Close()
 
 	buf := new(bytes.Buffer)
 	if _, err := io.Copy(buf, logs); err != nil {
-		return "", fmt.Errorf("failed to read logs: %w", err)
+		return "", errors.Wrap(errors.ErrCodeInternal, "failed to read logs", err)
 	}
 
 	return buf.String(), nil
@@ -218,7 +219,7 @@ func (d *Deployer) WaitForPodReady(ctx context.Context, timeout time.Duration) e
 
 			// Check for failed Pod
 			if pod.Status.Phase == corev1.PodFailed {
-				return false, fmt.Errorf("pod failed: %s", pod.Status.Message)
+				return false, errors.New(errors.ErrCodeInternal, fmt.Sprintf("pod failed: %s", pod.Status.Message))
 			}
 
 			return false, nil // Keep waiting
@@ -231,7 +232,7 @@ func (d *Deployer) WaitForPodReady(ctx context.Context, timeout time.Duration) e
 func parseConfigMapName(uri string) (namespace, name string, err error) {
 	// Expected format: cm://namespace/name
 	if !strings.HasPrefix(uri, "cm://") {
-		return "", "", fmt.Errorf("invalid ConfigMap URI format: expected cm://namespace/name, got %q", uri)
+		return "", "", errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid ConfigMap URI format: expected cm://namespace/name, got %q", uri))
 	}
 
 	// Remove cm:// prefix
@@ -240,7 +241,7 @@ func parseConfigMapName(uri string) (namespace, name string, err error) {
 	// Split into namespace/name
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("invalid ConfigMap URI format: expected cm://namespace/name, got %q", uri)
+		return "", "", errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid ConfigMap URI format: expected cm://namespace/name, got %q", uri))
 	}
 
 	return parts[0], parts[1], nil

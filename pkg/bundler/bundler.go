@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -172,7 +173,7 @@ func (b *DefaultBundler) makeUmbrellaChart(ctx context.Context, recipeResult *re
 	)
 
 	// Collect manifest contents from components
-	manifestContents, err := b.collectManifestContents(recipeResult)
+	manifestContents, err := b.collectManifestContents(ctx, recipeResult)
 	if err != nil {
 		return nil, errors.Wrap(errors.ErrCodeInternal,
 			"failed to collect manifest contents", err)
@@ -435,12 +436,12 @@ func (b *DefaultBundler) applyNodeSchedulingOverrides(componentName string, valu
 func (b *DefaultBundler) writeRecipeFile(recipeResult *recipe.RecipeResult, dir string) (int64, error) {
 	recipeData, err := yaml.Marshal(recipeResult)
 	if err != nil {
-		return 0, fmt.Errorf("failed to serialize recipe: %w", err)
+		return 0, errors.Wrap(errors.ErrCodeInternal, "failed to serialize recipe", err)
 	}
 
 	recipePath := fmt.Sprintf("%s/recipe.yaml", dir)
 	if err := os.WriteFile(recipePath, recipeData, 0600); err != nil {
-		return 0, fmt.Errorf("failed to write recipe file: %w", err)
+		return 0, errors.Wrap(errors.ErrCodeInternal, "failed to write recipe file", err)
 	}
 
 	slog.Debug("wrote recipe file", "path", recipePath)
@@ -449,20 +450,21 @@ func (b *DefaultBundler) writeRecipeFile(recipeResult *recipe.RecipeResult, dir 
 
 // removeHyphens removes hyphens from a string.
 func removeHyphens(s string) string {
-	result := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		if s[i] != '-' {
-			result = append(result, s[i])
-		}
-	}
-	return string(result)
+	return strings.ReplaceAll(s, "-", "")
 }
 
 // collectManifestContents gathers manifest file contents from all components.
-func (b *DefaultBundler) collectManifestContents(recipeResult *recipe.RecipeResult) (map[string][]byte, error) {
+func (b *DefaultBundler) collectManifestContents(ctx context.Context, recipeResult *recipe.RecipeResult) (map[string][]byte, error) {
 	contents := make(map[string][]byte)
 
 	for _, ref := range recipeResult.ComponentRefs {
+		// Check context cancellation at the outer loop
+		select {
+		case <-ctx.Done():
+			return nil, errors.Wrap(errors.ErrCodeTimeout, "context cancelled while collecting manifest contents", ctx.Err())
+		default:
+		}
+
 		for _, manifestPath := range ref.ManifestFiles {
 			if _, exists := contents[manifestPath]; exists {
 				continue // Already loaded (could be shared across components)
@@ -470,8 +472,7 @@ func (b *DefaultBundler) collectManifestContents(recipeResult *recipe.RecipeResu
 
 			content, err := recipe.GetManifestContent(manifestPath)
 			if err != nil {
-				return nil, fmt.Errorf("failed to load manifest %s for component %s: %w",
-					manifestPath, ref.Name, err)
+				return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to load manifest %s for component %s", manifestPath, ref.Name), err)
 			}
 			contents[manifestPath] = content
 		}

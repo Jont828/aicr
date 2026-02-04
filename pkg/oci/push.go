@@ -328,7 +328,7 @@ func preparePushDir(sourceDir, subDir string) (string, func(), error) {
 	// Create a temp dir and use hard links (fast, no extra disk space)
 	tempDir, err := os.MkdirTemp("", "oras-push-*")
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to create temp directory: %w", err)
+		return "", nil, apperrors.Wrap(apperrors.ErrCodeInternal, "failed to create temp directory", err)
 	}
 
 	srcPath := filepath.Join(sourceDir, subDir)
@@ -339,7 +339,7 @@ func preparePushDir(sourceDir, subDir string) (string, func(), error) {
 				"path", tempDir,
 				"error", removeErr)
 		}
-		return "", nil, fmt.Errorf("failed to create hard links: %w", err)
+		return "", nil, apperrors.Wrap(apperrors.ErrCodeInternal, "failed to create hard links", err)
 	}
 
 	cleanup := func() {
@@ -396,16 +396,16 @@ func createAuthClient(plainHTTP, insecureTLS bool) (*auth.Client, error) {
 func hardLinkDir(src, dst string) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
-		return fmt.Errorf("failed to stat source directory: %w", err)
+		return apperrors.Wrap(apperrors.ErrCodeInternal, "failed to stat source directory", err)
 	}
 
 	if mkdirErr := os.MkdirAll(dst, srcInfo.Mode()); mkdirErr != nil {
-		return fmt.Errorf("failed to create destination directory: %w", mkdirErr)
+		return apperrors.Wrap(apperrors.ErrCodeInternal, "failed to create destination directory", mkdirErr)
 	}
 
 	entries, err := os.ReadDir(src)
 	if err != nil {
-		return fmt.Errorf("failed to read source directory: %w", err)
+		return apperrors.Wrap(apperrors.ErrCodeInternal, "failed to read source directory", err)
 	}
 
 	for _, entry := range entries {
@@ -418,7 +418,7 @@ func hardLinkDir(src, dst string) error {
 			}
 		} else {
 			if err := os.Link(srcPath, dstPath); err != nil {
-				return fmt.Errorf("failed to create hard link: %w", err)
+				return apperrors.Wrap(apperrors.ErrCodeInternal, "failed to create hard link", err)
 			}
 		}
 	}

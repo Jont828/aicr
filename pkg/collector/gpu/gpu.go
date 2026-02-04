@@ -17,13 +17,14 @@ package gpu
 import (
 	"context"
 	"encoding/xml"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
 	"time"
 
 	"github.com/NVIDIA/eidos/pkg/defaults"
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/measurement"
 )
 
@@ -68,11 +69,11 @@ func (s *Collector) Collect(ctx context.Context) (*measurement.Measurement, erro
 
 	data, err := executeCommand(ctx, nvidiaSMICommand, "-q", "-x")
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute nvidia-smi command: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to execute nvidia-smi command", err)
 	}
 	smiReadings, err := getSMIReadings(data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse nvidia-smi output: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to parse nvidia-smi output", err)
 	}
 
 	res := &measurement.Measurement{
@@ -107,7 +108,7 @@ func noGPUMeasurement() *measurement.Measurement {
 func getSMIReadings(data []byte) (map[string]measurement.Reading, error) {
 	smiDevice, err := parseSMIDevice(data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse nvidia-smi output: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to parse nvidia-smi output", err)
 	}
 
 	smiData := make(map[string]measurement.Reading)
@@ -147,10 +148,10 @@ func executeCommand(ctx context.Context, name string, args ...string) ([]byte, e
 	if err != nil {
 		// Include stderr in the error message if available
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return nil, fmt.Errorf("failed to execute command %s: %w (stderr: %s)", name, err, string(exitErr.Stderr))
+		if stderrors.As(err, &exitErr) {
+			return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to execute command %s (stderr: %s)", name, string(exitErr.Stderr)), err)
 		}
-		return nil, fmt.Errorf("failed to execute command %s: %w", name, err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to execute command %s", name), err)
 	}
 	return output, nil
 }
@@ -159,7 +160,7 @@ func parseSMIDevice(data []byte) (*NVSMIDevice, error) {
 	var d NVSMIDevice
 	err := xml.Unmarshal(data, &d)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal NVIDIA SMI XML: %w - %s", err, string(data))
+		return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to unmarshal NVIDIA SMI XML - %s", string(data)), err)
 	}
 	return &d, nil
 }

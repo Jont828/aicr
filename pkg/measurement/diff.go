@@ -17,6 +17,8 @@ package measurement
 import (
 	"fmt"
 	"reflect"
+
+	"github.com/NVIDIA/eidos/pkg/errors"
 )
 
 // Compare compares two measurements and returns the differences in their subtypes.
@@ -24,8 +26,8 @@ import (
 // Each returned subtype contains only the keys that differ or are new.
 func Compare(m1, m2 Measurement) ([]*Subtype, error) {
 	if m1.Type != m2.Type {
-		return nil, fmt.Errorf("cannot compare different measurement types: %q (%d subtypes) vs %q (%d subtypes)",
-			m1.Type, len(m1.Subtypes), m2.Type, len(m2.Subtypes))
+		return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("cannot compare different measurement types: %q (%d subtypes) vs %q (%d subtypes)",
+			m1.Type, len(m1.Subtypes), m2.Type, len(m2.Subtypes)))
 	}
 
 	var diffs []*Subtype

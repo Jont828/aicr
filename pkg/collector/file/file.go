@@ -20,6 +20,8 @@ import (
 	"os"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/NVIDIA/eidos/pkg/errors"
 )
 
 // Options for configuring the Parser.
@@ -173,23 +175,23 @@ func (p *Parser) GetMap(path string) (map[string]string, error) {
 // or contains invalid UTF-8 content.
 func (p *Parser) GetLines(path string) ([]string, error) {
 	if path == "" {
-		return nil, fmt.Errorf("file path cannot be empty")
+		return nil, errors.New(errors.ErrCodeInvalidRequest, "file path cannot be empty")
 	}
 
 	// Read file content
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read file %q: %w", path, err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to read file %q", path), err)
 	}
 
 	// Validate UTF-8
 	if !utf8.Valid(b) {
-		return nil, fmt.Errorf("content of file %q is not valid UTF-8", path)
+		return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("content of file %q is not valid UTF-8", path))
 	}
 
 	// Check file size
 	if len(b) > p.maxSize {
-		return nil, fmt.Errorf("file %q exceeds maximum size of %d bytes", path, p.maxSize)
+		return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("file %q exceeds maximum size of %d bytes", path, p.maxSize))
 	}
 
 	// Split content by delimiter

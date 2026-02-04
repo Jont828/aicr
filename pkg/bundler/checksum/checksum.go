@@ -23,6 +23,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/NVIDIA/eidos/pkg/errors"
 )
 
 // ChecksumFileName is the standard name for checksum files.
@@ -40,7 +42,7 @@ const ChecksumFileName = "checksums.txt"
 // or the checksums file cannot be written.
 func GenerateChecksums(ctx context.Context, bundleDir string, files []string) error {
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context cancelled: %w", err)
+		return err
 	}
 
 	checksums := make([]string, 0, len(files))
@@ -48,7 +50,7 @@ func GenerateChecksums(ctx context.Context, bundleDir string, files []string) er
 	for _, file := range files {
 		data, err := os.ReadFile(file)
 		if err != nil {
-			return fmt.Errorf("failed to read %s for checksum: %w", file, err)
+			return errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to read %s for checksum", file), err)
 		}
 
 		hash := sha256.Sum256(data)
@@ -65,7 +67,7 @@ func GenerateChecksums(ctx context.Context, bundleDir string, files []string) er
 	content := strings.Join(checksums, "\n") + "\n"
 
 	if err := os.WriteFile(checksumPath, []byte(content), 0600); err != nil {
-		return fmt.Errorf("failed to write checksums: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to write checksums", err)
 	}
 
 	slog.Debug("checksums generated",

@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -187,11 +188,11 @@ func TestRespondJSON_BuffersBeforeWritingHeaders(t *testing.T) {
 	}
 }
 
-func TestNewHttpReader_Defaults(t *testing.T) {
-	reader := NewHttpReader()
+func TestNewHTTPReader_Defaults(t *testing.T) {
+	reader := NewHTTPReader()
 
 	if reader == nil {
-		t.Fatal("expected non-nil HttpReader")
+		t.Fatal("expected non-nil HTTPReader")
 		return
 	}
 
@@ -199,15 +200,15 @@ func TestNewHttpReader_Defaults(t *testing.T) {
 		t.Error("expected non-nil Client")
 	}
 
-	if reader.UserAgent != HttpReaderUserAgent {
+	if reader.UserAgent != HTTPReaderUserAgent {
 		t.Errorf("expected UserAgent 'Eidos-Serializer/1.0', got %s", reader.UserAgent)
 	}
 }
 
-func TestNewHttpReader_WithOptions(t *testing.T) {
+func TestNewHTTPReader_WithOptions(t *testing.T) {
 	customUserAgent := "TestAgent/1.0"
 
-	reader := NewHttpReader(
+	reader := NewHTTPReader(
 		WithUserAgent(customUserAgent),
 		WithInsecureSkipVerify(true),
 		WithMaxIdleConns(50),
@@ -254,12 +255,12 @@ func TestNewHttpReader_WithOptions(t *testing.T) {
 	}
 }
 
-func TestNewHttpReader_WithCustomClient(t *testing.T) {
+func TestNewHTTPReader_WithCustomClient(t *testing.T) {
 	customClient := &http.Client{
 		Timeout: 5 * time.Second,
 	}
 
-	reader := NewHttpReader(WithClient(customClient))
+	reader := NewHTTPReader(WithClient(customClient))
 
 	if reader.Client != customClient {
 		t.Error("expected custom client to be used")
@@ -270,14 +271,14 @@ func TestNewHttpReader_WithCustomClient(t *testing.T) {
 	}
 }
 
-func TestHttpReader_TimeoutOptions(t *testing.T) {
+func TestHTTPReader_TimeoutOptions(t *testing.T) {
 	totalTimeout := 10 * time.Second
 	connectTimeout := 2 * time.Second
 	tlsTimeout := 3 * time.Second
 	headerTimeout := 4 * time.Second
 	idleTimeout := 5 * time.Second
 
-	reader := NewHttpReader(
+	reader := NewHTTPReader(
 		WithTotalTimeout(totalTimeout),
 		WithConnectTimeout(connectTimeout),
 		WithTLSHandshakeTimeout(tlsTimeout),
@@ -324,7 +325,7 @@ func TestHttpReader_TimeoutOptions(t *testing.T) {
 	}
 }
 
-func TestHttpReader_Read_Success(t *testing.T) {
+func TestHTTPReader_Read_Success(t *testing.T) {
 	// Create test server
 	testData := []byte("test response data")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -333,7 +334,7 @@ func TestHttpReader_Read_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reader := NewHttpReader()
+	reader := NewHTTPReader()
 	data, err := reader.Read(server.URL)
 	if err != nil {
 		t.Fatalf("Read() failed: %v", err)
@@ -344,52 +345,52 @@ func TestHttpReader_Read_Success(t *testing.T) {
 	}
 }
 
-func TestHttpReader_Read_EmptyURL(t *testing.T) {
-	reader := NewHttpReader()
+func TestHTTPReader_Read_EmptyURL(t *testing.T) {
+	reader := NewHTTPReader()
 	_, err := reader.Read("")
 	if err == nil {
 		t.Error("expected error for empty URL")
 	}
-	if err.Error() != "url is empty" {
-		t.Errorf("expected 'url is empty' error, got %v", err)
+	if !strings.Contains(err.Error(), "url is empty") {
+		t.Errorf("expected error to contain 'url is empty', got %v", err)
 	}
 }
 
-func TestHttpReader_Read_NotFound(t *testing.T) {
+func TestHTTPReader_Read_NotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
-	reader := NewHttpReader()
+	reader := NewHTTPReader()
 	_, err := reader.Read(server.URL)
 	if err == nil {
 		t.Error("expected error for 404 status")
 	}
 }
 
-func TestHttpReader_Read_ServerError(t *testing.T) {
+func TestHTTPReader_Read_ServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
-	reader := NewHttpReader()
+	reader := NewHTTPReader()
 	_, err := reader.Read(server.URL)
 	if err == nil {
 		t.Error("expected error for 500 status")
 	}
 }
 
-func TestHttpReader_Read_InvalidURL(t *testing.T) {
-	reader := NewHttpReader()
+func TestHTTPReader_Read_InvalidURL(t *testing.T) {
+	reader := NewHTTPReader()
 	_, err := reader.Read("not-a-valid-url")
 	if err == nil {
 		t.Error("expected error for invalid URL")
 	}
 }
 
-func TestHttpReader_Read_JSONResponse(t *testing.T) {
+func TestHTTPReader_Read_JSONResponse(t *testing.T) {
 	testResponse := map[string]any{
 		"message": "success",
 		"code":    200,
@@ -400,7 +401,7 @@ func TestHttpReader_Read_JSONResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reader := NewHttpReader()
+	reader := NewHTTPReader()
 	data, err := reader.Read(server.URL)
 	if err != nil {
 		t.Fatalf("Read() failed: %v", err)
@@ -416,7 +417,7 @@ func TestHttpReader_Read_JSONResponse(t *testing.T) {
 	}
 }
 
-func TestHttpReader_Read_SetsUserAgent(t *testing.T) {
+func TestHTTPReader_Read_SetsUserAgent(t *testing.T) {
 	customUserAgent := "TestAgent/9.9"
 
 	seen := make(chan string, 1)
@@ -427,7 +428,7 @@ func TestHttpReader_Read_SetsUserAgent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reader := NewHttpReader(WithUserAgent(customUserAgent))
+	reader := NewHTTPReader(WithUserAgent(customUserAgent))
 	_, err := reader.Read(server.URL)
 	if err != nil {
 		t.Fatalf("Read() failed: %v", err)
@@ -443,7 +444,7 @@ func TestHttpReader_Read_SetsUserAgent(t *testing.T) {
 	}
 }
 
-func TestHttpReader_ReadWithContext_Canceled(t *testing.T) {
+func TestHTTPReader_ReadWithContext_Canceled(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// If the request isn't canceled, block for long enough to fail the test.
 		time.Sleep(5 * time.Second)
@@ -454,7 +455,7 @@ func TestHttpReader_ReadWithContext_Canceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	reader := NewHttpReader()
+	reader := NewHTTPReader()
 	_, err := reader.ReadWithContext(ctx, server.URL)
 	if err == nil {
 		t.Fatal("expected error")
@@ -464,7 +465,7 @@ func TestHttpReader_ReadWithContext_Canceled(t *testing.T) {
 	}
 }
 
-func TestHttpReader_ReadToFile_Success(t *testing.T) {
+func TestHTTPReader_ReadToFile_Success(t *testing.T) {
 	testData := []byte("test file content")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -476,7 +477,7 @@ func TestHttpReader_ReadToFile_Success(t *testing.T) {
 	tmpDir := t.TempDir()
 	filePath := filepath.Join(tmpDir, "test-output.txt")
 
-	reader := NewHttpReader()
+	reader := NewHTTPReader()
 	err := reader.Download(server.URL, filePath)
 	if err != nil {
 		t.Fatalf("ReadToFile() failed: %v", err)
@@ -493,19 +494,19 @@ func TestHttpReader_ReadToFile_Success(t *testing.T) {
 	}
 }
 
-func TestHttpReader_ReadToFile_ReadError(t *testing.T) {
+func TestHTTPReader_ReadToFile_ReadError(t *testing.T) {
 	// Create temp directory for test file
 	tmpDir := t.TempDir()
 	filePath := filepath.Join(tmpDir, "test-output.txt")
 
-	reader := NewHttpReader()
+	reader := NewHTTPReader()
 	err := reader.Download("not-a-valid-url", filePath)
 	if err == nil {
 		t.Error("expected error for invalid URL")
 	}
 }
 
-func TestHttpReader_ReadToFile_WriteError(t *testing.T) {
+func TestHTTPReader_ReadToFile_WriteError(t *testing.T) {
 	testData := []byte("test content")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -516,14 +517,14 @@ func TestHttpReader_ReadToFile_WriteError(t *testing.T) {
 	// Use invalid path (directory that doesn't exist)
 	invalidPath := "/nonexistent/directory/file.txt"
 
-	reader := NewHttpReader()
+	reader := NewHTTPReader()
 	err := reader.Download(server.URL, invalidPath)
 	if err == nil {
 		t.Error("expected error for invalid file path")
 	}
 }
 
-func TestHttpReader_ReadToFile_JSONFile(t *testing.T) {
+func TestHTTPReader_ReadToFile_JSONFile(t *testing.T) {
 	testResponse := map[string]string{
 		"key1": "value1",
 		"key2": "value2",
@@ -537,7 +538,7 @@ func TestHttpReader_ReadToFile_JSONFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	filePath := filepath.Join(tmpDir, "test.json")
 
-	reader := NewHttpReader()
+	reader := NewHTTPReader()
 	err := reader.Download(server.URL, filePath)
 	if err != nil {
 		t.Fatalf("ReadToFile() failed: %v", err)
@@ -559,7 +560,7 @@ func TestHttpReader_ReadToFile_JSONFile(t *testing.T) {
 	}
 }
 
-func TestHttpReader_Read_UserAgentHeader(t *testing.T) {
+func TestHTTPReader_Read_UserAgentHeader(t *testing.T) {
 	customUserAgent := "CustomAgent/2.0"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -568,7 +569,7 @@ func TestHttpReader_Read_UserAgentHeader(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reader := NewHttpReader(WithUserAgent(customUserAgent))
+	reader := NewHTTPReader(WithUserAgent(customUserAgent))
 
 	// Note: The current implementation doesn't set User-Agent header in requests
 	// This test documents current behavior
@@ -584,7 +585,7 @@ func TestHttpReader_Read_UserAgentHeader(t *testing.T) {
 	}
 }
 
-func TestHttpReader_Read_LargeResponse(t *testing.T) {
+func TestHTTPReader_Read_LargeResponse(t *testing.T) {
 	// Create large test data (1MB)
 	largeData := make([]byte, 1024*1024)
 	for i := range largeData {
@@ -597,7 +598,7 @@ func TestHttpReader_Read_LargeResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reader := NewHttpReader()
+	reader := NewHTTPReader()
 	data, err := reader.Read(server.URL)
 	if err != nil {
 		t.Fatalf("Read() failed: %v", err)
@@ -608,7 +609,7 @@ func TestHttpReader_Read_LargeResponse(t *testing.T) {
 	}
 }
 
-func TestHttpReader_Read_MultipleRequests(t *testing.T) {
+func TestHTTPReader_Read_MultipleRequests(t *testing.T) {
 	requestCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
@@ -617,7 +618,7 @@ func TestHttpReader_Read_MultipleRequests(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reader := NewHttpReader()
+	reader := NewHTTPReader()
 
 	// Make multiple requests with same reader
 	for i := 1; i <= 3; i++ {

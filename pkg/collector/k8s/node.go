@@ -21,6 +21,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/measurement"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -34,13 +35,13 @@ func (k *Collector) collectNode(ctx context.Context) (map[string]measurement.Rea
 	// Get the current node name from environment
 	nodeName := GetNodeName()
 	if nodeName == "" {
-		return nil, fmt.Errorf("node name not set in environment")
+		return nil, errors.New(errors.ErrCodeInvalidRequest, "node name not set in environment")
 	}
 
 	// Get node information from Kubernetes API
 	node, err := k.ClientSet.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get node %q: %w", nodeName, err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to get node %q", nodeName), err)
 	}
 
 	providerData := make(map[string]measurement.Reading)

@@ -74,7 +74,7 @@ func loadMetadataStore(_ context.Context) (*MetadataStore, error) {
 			if strings.Contains(path, "components/") {
 				content, readErr := provider.ReadFile(path)
 				if readErr != nil {
-					return fmt.Errorf("failed to read component file %s: %w", path, readErr)
+					return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, fmt.Sprintf("failed to read component file %s", path), readErr)
 				}
 				// Store with relative path (e.g., "components/cert-manager/values.yaml")
 				store.ValuesFiles[path] = content
@@ -94,12 +94,12 @@ func loadMetadataStore(_ context.Context) (*MetadataStore, error) {
 			// Read and parse metadata file
 			content, readErr := provider.ReadFile(path)
 			if readErr != nil {
-				return fmt.Errorf("failed to read %s: %w", path, readErr)
+				return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, fmt.Sprintf("failed to read %s", path), readErr)
 			}
 
 			var metadata RecipeMetadata
 			if parseErr := yaml.Unmarshal(content, &metadata); parseErr != nil {
-				return fmt.Errorf("failed to parse %s: %w", path, parseErr)
+				return eidoserrors.Wrap(eidoserrors.ErrCodeInvalidRequest, fmt.Sprintf("failed to parse %s", path), parseErr)
 			}
 
 			// Categorize as base or overlay

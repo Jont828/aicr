@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/NVIDIA/eidos/pkg/defaults"
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/header"
 	"github.com/NVIDIA/eidos/pkg/k8s/client"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -63,7 +64,7 @@ func (w *ConfigMapWriter) Serialize(ctx context.Context, snapshot any) error {
 
 	client, config, err := client.GetKubeClient()
 	if err != nil {
-		return fmt.Errorf("failed to get kubernetes client: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to get kubernetes client", err)
 	}
 
 	// Log authentication context for audit
@@ -99,10 +100,10 @@ func (w *ConfigMapWriter) Serialize(ctx context.Context, snapshot any) error {
 		content, err = serializeTable(snapshot)
 		extension = "txt"
 	default:
-		return fmt.Errorf("unsupported format for ConfigMap: %s", w.format)
+		return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("unsupported format for ConfigMap: %s", w.format))
 	}
 	if err != nil {
-		return fmt.Errorf("failed to serialize snapshot: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to serialize snapshot", err)
 	}
 
 	// Extract metadata from snapshot if it has a header
@@ -170,7 +171,7 @@ func (w *ConfigMapWriter) Serialize(ctx context.Context, snapshot any) error {
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to apply ConfigMap: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to apply ConfigMap", err)
 	}
 
 	return nil
@@ -187,7 +188,7 @@ func (w *ConfigMapWriter) Close() error {
 // Returns an error if the URI is malformed.
 func parseConfigMapURI(uri string) (namespace, name string, err error) {
 	if !strings.HasPrefix(uri, ConfigMapURIScheme) {
-		return "", "", fmt.Errorf("invalid ConfigMap URI: must start with %s", ConfigMapURIScheme)
+		return "", "", errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid ConfigMap URI: must start with %s", ConfigMapURIScheme))
 	}
 
 	// Remove cm:// prefix
@@ -196,17 +197,17 @@ func parseConfigMapURI(uri string) (namespace, name string, err error) {
 	// Split into namespace/name
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid ConfigMap URI format: expected %snamespace/name, got %s", ConfigMapURIScheme, uri)
+		return "", "", errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid ConfigMap URI format: expected %snamespace/name, got %s", ConfigMapURIScheme, uri))
 	}
 
 	namespace = strings.TrimSpace(parts[0])
 	name = strings.TrimSpace(parts[1])
 
 	if namespace == "" {
-		return "", "", fmt.Errorf("invalid ConfigMap URI: namespace cannot be empty")
+		return "", "", errors.New(errors.ErrCodeInvalidRequest, "invalid ConfigMap URI: namespace cannot be empty")
 	}
 	if name == "" {
-		return "", "", fmt.Errorf("invalid ConfigMap URI: name cannot be empty")
+		return "", "", errors.New(errors.ErrCodeInvalidRequest, "invalid ConfigMap URI: name cannot be empty")
 	}
 
 	return namespace, name, nil

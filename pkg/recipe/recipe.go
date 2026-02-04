@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/header"
 	"github.com/NVIDIA/eidos/pkg/measurement"
 )
@@ -56,11 +57,11 @@ type Recipe struct {
 // Validate validates a recipe against all registered bundlers that implement Validator.
 func (v *Recipe) Validate() error {
 	if v == nil {
-		return fmt.Errorf("recipe cannot be nil")
+		return errors.New(errors.ErrCodeInvalidRequest, "recipe cannot be nil")
 	}
 
 	if len(v.Measurements) == 0 {
-		return fmt.Errorf("recipe has no measurements")
+		return errors.New(errors.ErrCodeInvalidRequest, "recipe has no measurements")
 	}
 
 	return nil
@@ -75,25 +76,25 @@ func (v *Recipe) ValidateStructure() error {
 	// Validate each measurement
 	for i, m := range v.Measurements {
 		if m == nil {
-			return fmt.Errorf("measurement at index %d is nil", i)
+			return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("measurement at index %d is nil", i))
 		}
 
 		if m.Type == "" {
-			return fmt.Errorf("measurement at index %d has empty type", i)
+			return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("measurement at index %d has empty type", i))
 		}
 
 		if len(m.Subtypes) == 0 {
-			return fmt.Errorf("measurement type %s has no subtypes", m.Type)
+			return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("measurement type %s has no subtypes", m.Type))
 		}
 
 		// Validate subtypes
 		for j, st := range m.Subtypes {
 			if st.Name == "" {
-				return fmt.Errorf("subtype at index %d in measurement %s has empty name", j, m.Type)
+				return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("subtype at index %d in measurement %s has empty name", j, m.Type))
 			}
 
 			if st.Data == nil {
-				return fmt.Errorf("subtype %s in measurement %s has nil data", st.Name, m.Type)
+				return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("subtype %s in measurement %s has nil data", st.Name, m.Type))
 			}
 		}
 	}
@@ -112,7 +113,7 @@ func (v *Recipe) ValidateMeasurementExists(measurementType measurement.Type) err
 			return nil
 		}
 	}
-	return fmt.Errorf("measurement type %s not found in recipe", measurementType)
+	return errors.New(errors.ErrCodeNotFound, fmt.Sprintf("measurement type %s not found in recipe", measurementType))
 }
 
 // ValidateSubtypeExists checks if a specific subtype exists within a measurement.
@@ -128,21 +129,21 @@ func (v *Recipe) ValidateSubtypeExists(measurementType measurement.Type, subtype
 					return nil
 				}
 			}
-			return fmt.Errorf("subtype %s not found in measurement type %s", subtypeName, measurementType)
+			return errors.New(errors.ErrCodeNotFound, fmt.Sprintf("subtype %s not found in measurement type %s", subtypeName, measurementType))
 		}
 	}
-	return fmt.Errorf("measurement type %s not found in recipe", measurementType)
+	return errors.New(errors.ErrCodeNotFound, fmt.Sprintf("measurement type %s not found in recipe", measurementType))
 }
 
 // ValidateRequiredKeys checks if required keys exist in a subtype's data.
 func ValidateRequiredKeys(subtype *measurement.Subtype, requiredKeys []string) error {
 	if subtype == nil {
-		return fmt.Errorf("subtype is nil")
+		return errors.New(errors.ErrCodeInvalidRequest, "subtype is nil")
 	}
 
 	for _, key := range requiredKeys {
 		if _, exists := subtype.Data[key]; !exists {
-			return fmt.Errorf("required key %s not found in subtype %s", key, subtype.Name)
+			return errors.New(errors.ErrCodeNotFound, fmt.Sprintf("required key %s not found in subtype %s", key, subtype.Name))
 		}
 	}
 

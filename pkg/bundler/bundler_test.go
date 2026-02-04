@@ -417,7 +417,7 @@ func TestCollectManifestContents(t *testing.T) {
 			},
 		}
 
-		contents, err := bundler.collectManifestContents(recipeResult)
+		contents, err := bundler.collectManifestContents(context.Background(), recipeResult)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -431,7 +431,7 @@ func TestCollectManifestContents(t *testing.T) {
 			ComponentRefs: []recipe.ComponentRef{},
 		}
 
-		contents, err := bundler.collectManifestContents(recipeResult)
+		contents, err := bundler.collectManifestContents(context.Background(), recipeResult)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -450,7 +450,7 @@ func TestCollectManifestContents(t *testing.T) {
 			},
 		}
 
-		_, err := bundler.collectManifestContents(recipeResult)
+		_, err := bundler.collectManifestContents(context.Background(), recipeResult)
 		if err == nil {
 			t.Fatal("expected error for invalid manifest path")
 		}
@@ -473,7 +473,7 @@ func TestCollectManifestContents(t *testing.T) {
 			},
 		}
 
-		contents, err := bundler.collectManifestContents(recipeResult)
+		contents, err := bundler.collectManifestContents(context.Background(), recipeResult)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

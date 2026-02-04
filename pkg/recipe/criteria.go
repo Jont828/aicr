@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/serializer"
 	"gopkg.in/yaml.v3"
 )
@@ -59,7 +60,7 @@ func ParseCriteriaServiceType(s string) (CriteriaServiceType, error) {
 	case "kind":
 		return CriteriaServiceKind, nil
 	default:
-		return CriteriaServiceAny, fmt.Errorf("invalid service type: %s", s)
+		return CriteriaServiceAny, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid service type: %s", s))
 	}
 }
 
@@ -94,7 +95,7 @@ func ParseCriteriaAcceleratorType(s string) (CriteriaAcceleratorType, error) {
 	case "l40":
 		return CriteriaAcceleratorL40, nil
 	default:
-		return CriteriaAcceleratorAny, fmt.Errorf("invalid accelerator type: %s", s)
+		return CriteriaAcceleratorAny, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid accelerator type: %s", s))
 	}
 }
 
@@ -123,7 +124,7 @@ func ParseCriteriaIntentType(s string) (CriteriaIntentType, error) {
 	case "inference":
 		return CriteriaIntentInference, nil
 	default:
-		return CriteriaIntentAny, fmt.Errorf("invalid intent type: %s", s)
+		return CriteriaIntentAny, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid intent type: %s", s))
 	}
 }
 
@@ -158,7 +159,7 @@ func ParseCriteriaOSType(s string) (CriteriaOSType, error) {
 	case "amazonlinux", "al2", "al2023":
 		return CriteriaOSAmazonLinux, nil
 	default:
-		return CriteriaOSAny, fmt.Errorf("invalid os type: %s", s)
+		return CriteriaOSAny, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid os type: %s", s))
 	}
 }
 
@@ -187,7 +188,7 @@ func ParseCriteriaPlatformType(s string) (CriteriaPlatformType, error) {
 	case "runai":
 		return CriteriaPlatformRunAI, nil
 	default:
-		return CriteriaPlatformAny, fmt.Errorf("invalid platform type: %s", s)
+		return CriteriaPlatformAny, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid platform type: %s", s))
 	}
 }
 
@@ -439,7 +440,7 @@ func WithCriteriaPlatform(s string) CriteriaOption {
 func WithCriteriaNodes(n int) CriteriaOption {
 	return func(c *Criteria) error {
 		if n < 0 {
-			return fmt.Errorf("invalid nodes count: %d (must be >= 0)", n)
+			return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid nodes count: %d (must be >= 0)", n))
 		}
 		c.Nodes = n
 		return nil
@@ -462,7 +463,7 @@ func BuildCriteria(opts ...CriteriaOption) (*Criteria, error) {
 // Supported parameters: service, accelerator (alias: gpu), intent, os, nodes.
 func ParseCriteriaFromRequest(r *http.Request) (*Criteria, error) {
 	if r == nil {
-		return nil, fmt.Errorf("request cannot be nil")
+		return nil, errors.New(errors.ErrCodeInvalidRequest, "request cannot be nil")
 	}
 
 	q := r.URL.Query()
@@ -528,10 +529,10 @@ func ParseCriteriaFromValues(values url.Values) (*Criteria, error) {
 	if s := values.Get("nodes"); s != "" {
 		var n int
 		if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
-			return nil, fmt.Errorf("invalid nodes value: %s", s)
+			return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid nodes value: %s", s))
 		}
 		if n < 0 {
-			return nil, fmt.Errorf("invalid nodes count: %d (must be >= 0)", n)
+			return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid nodes count: %d (must be >= 0)", n))
 		}
 		c.Nodes = n
 	}
@@ -642,7 +643,7 @@ func validateAndConvertRawSpec(raw *rawCriteriaSpec) (*Criteria, error) {
 	}
 
 	if raw.Nodes < 0 {
-		return nil, fmt.Errorf("invalid nodes count: %d (must be >= 0)", raw.Nodes)
+		return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid nodes count: %d (must be >= 0)", raw.Nodes))
 	}
 	c.Nodes = raw.Nodes
 
@@ -667,15 +668,15 @@ func validateAndConvertRawSpec(raw *rawCriteriaSpec) (*Criteria, error) {
 func LoadCriteriaFromFile(path string) (*Criteria, error) {
 	raw, err := serializer.FromFile[rawRecipeCriteria](path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load criteria file: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to load criteria file", err)
 	}
 
 	// Validate kind and apiVersion
 	if raw.Kind != "" && raw.Kind != RecipeCriteriaKind {
-		return nil, fmt.Errorf("invalid kind %q, expected %q", raw.Kind, RecipeCriteriaKind)
+		return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid kind %q, expected %q", raw.Kind, RecipeCriteriaKind))
 	}
 	if raw.APIVersion != "" && raw.APIVersion != RecipeCriteriaAPIVersion {
-		return nil, fmt.Errorf("invalid apiVersion %q, expected %q", raw.APIVersion, RecipeCriteriaAPIVersion)
+		return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid apiVersion %q, expected %q", raw.APIVersion, RecipeCriteriaAPIVersion))
 	}
 
 	return validateAndConvertRawSpec(&raw.Spec)
@@ -701,16 +702,16 @@ func LoadCriteriaFromFile(path string) (*Criteria, error) {
 //	}
 func ParseCriteriaFromBody(body io.Reader, contentType string) (*Criteria, error) {
 	if body == nil {
-		return nil, fmt.Errorf("request body cannot be nil")
+		return nil, errors.New(errors.ErrCodeInvalidRequest, "request body cannot be nil")
 	}
 
 	data, err := io.ReadAll(body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read request body: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to read request body", err)
 	}
 
 	if len(data) == 0 {
-		return nil, fmt.Errorf("request body is empty")
+		return nil, errors.New(errors.ErrCodeInvalidRequest, "request body is empty")
 	}
 
 	var raw rawRecipeCriteria
@@ -725,26 +726,26 @@ func ParseCriteriaFromBody(body io.Reader, contentType string) (*Criteria, error
 	switch ct {
 	case "application/x-yaml", "application/yaml", "text/yaml":
 		if err := yaml.Unmarshal(data, &raw); err != nil {
-			return nil, fmt.Errorf("failed to parse YAML body: %w", err)
+			return nil, errors.Wrap(errors.ErrCodeInvalidRequest, "failed to parse YAML body", err)
 		}
 	case "application/json", "":
 		// Default to JSON for empty or unrecognized content type
 		if err := json.Unmarshal(data, &raw); err != nil {
-			return nil, fmt.Errorf("failed to parse JSON body: %w", err)
+			return nil, errors.Wrap(errors.ErrCodeInvalidRequest, "failed to parse JSON body", err)
 		}
 	default:
 		// Try JSON first for unrecognized types
 		if err := json.Unmarshal(data, &raw); err != nil {
-			return nil, fmt.Errorf("unsupported content type %q and failed to parse as JSON: %w", contentType, err)
+			return nil, errors.Wrap(errors.ErrCodeInvalidRequest, fmt.Sprintf("unsupported content type %q and failed to parse as JSON", contentType), err)
 		}
 	}
 
 	// Validate kind and apiVersion
 	if raw.Kind != "" && raw.Kind != RecipeCriteriaKind {
-		return nil, fmt.Errorf("invalid kind %q, expected %q", raw.Kind, RecipeCriteriaKind)
+		return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid kind %q, expected %q", raw.Kind, RecipeCriteriaKind))
 	}
 	if raw.APIVersion != "" && raw.APIVersion != RecipeCriteriaAPIVersion {
-		return nil, fmt.Errorf("invalid apiVersion %q, expected %q", raw.APIVersion, RecipeCriteriaAPIVersion)
+		return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid apiVersion %q, expected %q", raw.APIVersion, RecipeCriteriaAPIVersion))
 	}
 
 	return validateAndConvertRawSpec(&raw.Spec)

@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -42,7 +43,7 @@ func ParseDeployerType(s string) (DeployerType, error) {
 	case string(DeployerArgoCD):
 		return DeployerArgoCD, nil
 	default:
-		return "", fmt.Errorf("invalid deployer type %q: must be one of %v", s, GetDeployerTypes())
+		return "", errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid deployer type %q: must be one of %v", s, GetDeployerTypes()))
 	}
 }
 
@@ -333,7 +334,7 @@ func ParseValueOverrides(overrides []string) (map[string]map[string]string, erro
 		// Split on first ':' to get bundler and path=value
 		parts := strings.SplitN(override, ":", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid format '%s': expected 'bundler:path=value'", override)
+			return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid format '%s': expected 'bundler:path=value'", override))
 		}
 
 		bundlerName := parts[0]
@@ -342,14 +343,14 @@ func ParseValueOverrides(overrides []string) (map[string]map[string]string, erro
 		// Split on first '=' to get path and value
 		kvParts := strings.SplitN(pathValue, "=", 2)
 		if len(kvParts) != 2 {
-			return nil, fmt.Errorf("invalid format '%s': expected 'bundler:path=value'", override)
+			return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid format '%s': expected 'bundler:path=value'", override))
 		}
 
 		path := kvParts[0]
 		value := kvParts[1]
 
 		if path == "" || value == "" {
-			return nil, fmt.Errorf("invalid format '%s': path and value cannot be empty", override)
+			return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid format '%s': path and value cannot be empty", override))
 		}
 
 		// Initialize bundler map if needed

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/measurement"
 	"github.com/coreos/go-systemd/v22/dbus"
 )
@@ -66,7 +67,7 @@ func (s *Collector) Collect(ctx context.Context) (*measurement.Measurement, erro
 	for _, service := range services {
 		data, err := conn.GetAllPropertiesContext(ctx, service)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get unit properties: %w", err)
+			return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to get unit properties for %s", service), err)
 		}
 
 		readings := make(map[string]measurement.Reading)

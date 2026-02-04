@@ -16,9 +16,9 @@ package k8s
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/measurement"
 )
 
@@ -33,7 +33,7 @@ func (k *Collector) collectServer(ctx context.Context) (map[string]measurement.R
 	// Server Version
 	serverVersion, err := k.ClientSet.Discovery().ServerVersion()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get kubernetes version: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to get kubernetes version", err)
 	}
 
 	slog.Debug("collected kubernetes version", slog.String("version", serverVersion.GitVersion))

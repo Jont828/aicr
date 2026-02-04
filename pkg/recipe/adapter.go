@@ -19,6 +19,7 @@ import (
 	"embed"
 	"fmt"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"gopkg.in/yaml.v3"
 )
 
@@ -120,7 +121,7 @@ func (r *RecipeResult) GetComponentRef(name string) *ComponentRef {
 func (r *RecipeResult) GetValuesForComponent(name string) (map[string]any, error) {
 	ref := r.GetComponentRef(name)
 	if ref == nil {
-		return nil, fmt.Errorf("component %q not found in recipe", name)
+		return nil, errors.New(errors.ErrCodeNotFound, fmt.Sprintf("component %q not found in recipe", name))
 	}
 
 	// Start with empty result
@@ -148,19 +149,19 @@ func (r *RecipeResult) GetValuesForComponent(name string) (map[string]any, error
 			} else {
 				err = yaml.Unmarshal(baseData, &result)
 				if err != nil {
-					return nil, fmt.Errorf("failed to parse base values file %q: %w", baseValuesFile, err)
+					return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to parse base values file %q", baseValuesFile), err)
 				}
 			}
 
 			// Load overlay values
 			overlayData, err := provider.ReadFile(ref.ValuesFile)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read overlay values file %q: %w", ref.ValuesFile, err)
+				return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to read overlay values file %q", ref.ValuesFile), err)
 			}
 
 			var overlayValues map[string]any
 			if err := yaml.Unmarshal(overlayData, &overlayValues); err != nil {
-				return nil, fmt.Errorf("failed to parse overlay values file %q: %w", ref.ValuesFile, err)
+				return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to parse overlay values file %q", ref.ValuesFile), err)
 			}
 
 			// Merge overlay into base (overlay takes precedence over base)
@@ -169,11 +170,11 @@ func (r *RecipeResult) GetValuesForComponent(name string) (map[string]any, error
 			// Just load the base values file
 			data, err := provider.ReadFile(ref.ValuesFile)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read values file %q: %w", ref.ValuesFile, err)
+				return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to read values file %q", ref.ValuesFile), err)
 			}
 
 			if err := yaml.Unmarshal(data, &result); err != nil {
-				return nil, fmt.Errorf("failed to parse values file %q: %w", ref.ValuesFile, err)
+				return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to parse values file %q", ref.ValuesFile), err)
 			}
 		}
 	}

@@ -235,10 +235,7 @@ func (v Version) Equals(other Version) bool {
 // Useful for sorting versions.
 func (v Version) Compare(other Version) int {
 	// Use lower precision for comparison
-	precision := v.Precision
-	if other.Precision < precision {
-		precision = other.Precision
-	}
+	precision := min(v.Precision, other.Precision)
 
 	// Compare Major
 	if v.Major < other.Major {
@@ -287,15 +284,4 @@ func (v Version) IsValid() bool {
 		return false
 	}
 	return true
-}
-
-// ToString converts a version pointer to string.
-func ToString(v any) string {
-	if v == nil {
-		return ""
-	}
-	if s, ok := v.(interface{ String() string }); ok {
-		return s.String()
-	}
-	return ""
 }

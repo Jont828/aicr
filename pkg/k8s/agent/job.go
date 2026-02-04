@@ -16,9 +16,9 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"time"
 
+	eidoserrors "github.com/NVIDIA/eidos/pkg/errors"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -40,14 +40,14 @@ func (d *Deployer) ensureJob(ctx context.Context) error {
 		},
 	)
 	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete existing Job: %w", err)
+		return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to delete existing Job", err)
 	}
 
 	// Wait for Job to be fully deleted
 	jobExisted := err == nil // Job existed and was deleted
 	if jobExisted {
 		if waitErr := d.waitForJobDeletion(ctx); waitErr != nil {
-			return fmt.Errorf("timeout waiting for Job deletion: %w", waitErr)
+			return eidoserrors.Wrap(eidoserrors.ErrCodeTimeout, "timeout waiting for Job deletion", waitErr)
 		}
 	}
 
@@ -56,7 +56,7 @@ func (d *Deployer) ensureJob(ctx context.Context) error {
 	_, err = d.clientset.BatchV1().Jobs(d.config.Namespace).
 		Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to create Job: %w", err)
+		return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to create Job", err)
 	}
 
 	return nil

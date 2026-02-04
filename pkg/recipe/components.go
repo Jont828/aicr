@@ -19,6 +19,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"gopkg.in/yaml.v3"
 )
 
@@ -130,12 +131,12 @@ func loadComponentRegistry() (*ComponentRegistry, error) {
 	provider := GetDataProvider()
 	data, err := provider.ReadFile("registry.yaml")
 	if err != nil {
-		return nil, fmt.Errorf("failed to read registry.yaml: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to read registry.yaml", err)
 	}
 
 	var registry ComponentRegistry
 	if err := yaml.Unmarshal(data, &registry); err != nil {
-		return nil, fmt.Errorf("failed to parse registry.yaml: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to parse registry.yaml", err)
 	}
 
 	// Build index for fast lookup
@@ -202,7 +203,7 @@ func (r *ComponentRegistry) Count() int {
 // Returns a slice of validation errors (empty if valid).
 func (r *ComponentRegistry) Validate() []error {
 	if r == nil {
-		return []error{fmt.Errorf("registry is nil")}
+		return []error{errors.New(errors.ErrCodeInvalidRequest, "registry is nil")}
 	}
 
 	var errs []error
@@ -210,10 +211,10 @@ func (r *ComponentRegistry) Validate() []error {
 	// Check for required fields
 	for i, comp := range r.Components {
 		if comp.Name == "" {
-			errs = append(errs, fmt.Errorf("component[%d]: name is required", i))
+			errs = append(errs, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("component[%d]: name is required", i)))
 		}
 		if comp.DisplayName == "" {
-			errs = append(errs, fmt.Errorf("component[%d] (%s): displayName is required", i, comp.Name))
+			errs = append(errs, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("component[%d] (%s): displayName is required", i, comp.Name)))
 		}
 	}
 
@@ -222,7 +223,7 @@ func (r *ComponentRegistry) Validate() []error {
 	for _, comp := range r.Components {
 		if comp.Name != "" {
 			if seen[comp.Name] {
-				errs = append(errs, fmt.Errorf("duplicate component name: %s", comp.Name))
+				errs = append(errs, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("duplicate component name: %s", comp.Name)))
 			}
 			seen[comp.Name] = true
 		}
@@ -233,7 +234,7 @@ func (r *ComponentRegistry) Validate() []error {
 	for _, comp := range r.Components {
 		for _, key := range comp.ValueOverrideKeys {
 			if existing, ok := overrideKeys[key]; ok {
-				errs = append(errs, fmt.Errorf("duplicate valueOverrideKey %q: used by both %s and %s", key, existing, comp.Name))
+				errs = append(errs, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("duplicate valueOverrideKey %q: used by both %s and %s", key, existing, comp.Name)))
 			}
 			overrideKeys[key] = comp.Name
 		}
@@ -245,7 +246,7 @@ func (r *ComponentRegistry) Validate() []error {
 		hasKustomize := comp.Kustomize.DefaultSource != ""
 
 		if hasHelm && hasKustomize {
-			errs = append(errs, fmt.Errorf("component[%d] (%s): cannot have both helm and kustomize configuration", i, comp.Name))
+			errs = append(errs, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("component[%d] (%s): cannot have both helm and kustomize configuration", i, comp.Name)))
 		}
 	}
 

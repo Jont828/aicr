@@ -28,6 +28,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/NVIDIA/eidos/pkg/bundler/result"
+	"github.com/NVIDIA/eidos/pkg/errors"
 )
 
 // TemplateRenderer provides template rendering functionality for bundlers.
@@ -47,17 +48,17 @@ func NewTemplateRenderer(getter func(name string) (string, bool)) *TemplateRende
 func (r *TemplateRenderer) Render(name string, data map[string]any) (string, error) {
 	tmplContent, ok := r.templateGetter(name)
 	if !ok {
-		return "", fmt.Errorf("template %s not found", name)
+		return "", errors.New(errors.ErrCodeNotFound, fmt.Sprintf("template %s not found", name))
 	}
 
 	tmpl, err := template.New(name).Parse(tmplContent)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse template %s: %w", name, err)
+		return "", errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to parse template %s", name), err)
 	}
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed to execute template %s: %w", name, err)
+		return "", errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to execute template %s", name), err)
 	}
 
 	return buf.String(), nil
@@ -78,7 +79,7 @@ func NewFileWriter(result *result.Result) *FileWriter {
 // WriteFile writes content to a file with the specified permissions and updates the result.
 func (w *FileWriter) WriteFile(path string, content []byte, perm os.FileMode) error {
 	if err := os.WriteFile(path, content, perm); err != nil {
-		return fmt.Errorf("failed to write file %s: %w", path, err)
+		return errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to write file %s", path), err)
 	}
 
 	w.result.AddFile(path, int64(len(content)))
@@ -100,7 +101,7 @@ func (w *FileWriter) WriteFileString(path, content string, perm os.FileMode) err
 // MakeExecutable changes file permissions to make it executable.
 func (w *FileWriter) MakeExecutable(path string) error {
 	if err := os.Chmod(path, 0755); err != nil {
-		w.result.AddError(fmt.Errorf("failed to make %s executable: %w", filepath.Base(path), err))
+		w.result.AddError(errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to make %s executable", filepath.Base(path)), err))
 		return err
 	}
 	return nil
@@ -118,7 +119,7 @@ func NewDirectoryManager() *DirectoryManager {
 func (m *DirectoryManager) CreateDirectories(dirs []string, perm os.FileMode) error {
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, perm); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to create directory %s", dir), err)
 		}
 	}
 	return nil
@@ -194,7 +195,7 @@ func (g *ChecksumGenerator) Generate(outputDir, title string) (string, error) {
 
 		fileContent, err := os.ReadFile(file)
 		if err != nil {
-			return "", fmt.Errorf("failed to read file %s for checksum: %w", file, err)
+			return "", errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to read file %s for checksum", file), err)
 		}
 
 		checksum := ComputeChecksum(fileContent)
@@ -219,7 +220,7 @@ func MarshalYAML(v any) ([]byte, error) {
 	encoder := yaml.NewEncoder(&buf)
 	encoder.SetIndent(2)
 	if err := encoder.Encode(v); err != nil {
-		return nil, fmt.Errorf("failed to marshal YAML: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to marshal YAML", err)
 	}
 	return buf.Bytes(), nil
 }
@@ -246,7 +247,7 @@ func MarshalYAMLWithHeader(v any, header ValuesHeader) ([]byte, error) {
 	encoder := yaml.NewEncoder(&buf)
 	encoder.SetIndent(2)
 	if err := encoder.Encode(v); err != nil {
-		return nil, fmt.Errorf("failed to marshal YAML: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to marshal YAML", err)
 	}
 	return buf.Bytes(), nil
 }

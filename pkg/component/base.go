@@ -28,6 +28,7 @@ import (
 	"github.com/NVIDIA/eidos/pkg/bundler/config"
 	"github.com/NVIDIA/eidos/pkg/bundler/result"
 	"github.com/NVIDIA/eidos/pkg/bundler/types"
+	"github.com/NVIDIA/eidos/pkg/errors"
 )
 
 // BaseBundler provides common functionality for bundler implementations.
@@ -72,7 +73,7 @@ func (b *BaseBundler) CreateBundleDir(outputDir, bundleName string) (BundleDirec
 
 	// Only create the root directory. Subdirectories will be created when needed.
 	if err := os.MkdirAll(dirs.Root, 0755); err != nil {
-		return dirs, fmt.Errorf("failed to create directory %s: %w", dirs.Root, err)
+		return dirs, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to create directory %s", dirs.Root), err)
 	}
 
 	slog.Debug("bundle directory created",
@@ -91,11 +92,11 @@ func (b *BaseBundler) WriteFile(path string, content []byte, perm os.FileMode) e
 	// Ensure parent directory exists
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		return errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to create directory %s", dir), err)
 	}
 
 	if err := os.WriteFile(path, content, perm); err != nil {
-		return fmt.Errorf("failed to write %s: %w", path, err)
+		return errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to write %s", path), err)
 	}
 
 	b.Result.AddFile(path, int64(len(content)))
@@ -121,12 +122,12 @@ func (b *BaseBundler) WriteFileString(path, content string, perm os.FileMode) er
 func (b *BaseBundler) RenderTemplate(tmplContent, name string, data any) (string, error) {
 	tmpl, err := template.New(name).Parse(tmplContent)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse template %s: %w", name, err)
+		return "", errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to parse template %s", name), err)
 	}
 
 	var buf strings.Builder
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed to execute template %s: %w", name, err)
+		return "", errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to execute template %s", name), err)
 	}
 
 	return buf.String(), nil
@@ -165,7 +166,7 @@ func (b *BaseBundler) GenerateChecksums(ctx context.Context, bundleDir string) e
 // This is typically used for shell scripts after writing them.
 func (b *BaseBundler) MakeExecutable(path string) error {
 	if err := os.Chmod(path, 0755); err != nil {
-		b.Result.AddError(fmt.Errorf("failed to make %s executable: %w", filepath.Base(path), err))
+		b.Result.AddError(errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to make %s executable", filepath.Base(path)), err))
 		return err
 	}
 
@@ -285,7 +286,7 @@ func (b *BaseBundler) GenerateFileFromTemplate(ctx context.Context, getTemplate 
 
 	tmpl, ok := getTemplate(templateName)
 	if !ok {
-		return fmt.Errorf("%s template not found", templateName)
+		return errors.New(errors.ErrCodeNotFound, fmt.Sprintf("%s template not found", templateName))
 	}
 
 	return b.RenderAndWriteTemplate(tmpl, templateName, outputPath, data, perm)

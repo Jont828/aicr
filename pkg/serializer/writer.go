@@ -26,6 +26,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"gopkg.in/yaml.v3"
 )
 
@@ -103,14 +104,14 @@ func NewFileWriterOrStdout(format Format, path string) (Serializer, error) {
 	if strings.HasPrefix(trimmed, ConfigMapURIScheme) {
 		namespace, name, err := parseConfigMapURI(trimmed)
 		if err != nil {
-			return nil, fmt.Errorf("invalid ConfigMap URI %q: %w", trimmed, err)
+			return nil, errors.Wrap(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid ConfigMap URI %q", trimmed), err)
 		}
 		return NewConfigMapWriter(namespace, name, format), nil
 	}
 
 	file, err := os.Create(trimmed)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create output file %q: %w", trimmed, err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to create output file %q", trimmed), err)
 	}
 
 	if format.IsUnknown() {
@@ -160,7 +161,7 @@ func (w *Writer) Serialize(ctx context.Context, config any) error {
 	case FormatTable:
 		return w.serializeTable(config)
 	default:
-		return fmt.Errorf("unsupported format: %s", w.format)
+		return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("unsupported format: %s", w.format))
 	}
 }
 
@@ -168,7 +169,7 @@ func (w *Writer) serializeJSON(config any) error {
 	encoder := json.NewEncoder(w.output)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(config); err != nil {
-		return fmt.Errorf("failed to serialize to JSON: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to serialize to JSON", err)
 	}
 	return nil
 }
@@ -177,7 +178,7 @@ func (w *Writer) serializeYAML(config any) error {
 	encoder := yaml.NewEncoder(w.output)
 	encoder.SetIndent(2)
 	if err := encoder.Encode(config); err != nil {
-		return fmt.Errorf("failed to serialize to YAML: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to serialize to YAML", err)
 	}
 	return nil
 }
@@ -265,7 +266,7 @@ func joinKey(prefix, suffix string) string {
 func serializeJSON(data any) ([]byte, error) {
 	content, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("failed to serialize to JSON: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to serialize to JSON", err)
 	}
 	return content, nil
 }
@@ -275,7 +276,7 @@ func serializeJSON(data any) ([]byte, error) {
 func serializeYAML(data any) ([]byte, error) {
 	content, err := yaml.Marshal(data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to serialize to YAML: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to serialize to YAML", err)
 	}
 	return content, nil
 }
@@ -303,7 +304,7 @@ func serializeTable(data any) ([]byte, error) {
 		fmt.Fprintf(tw, "%s\t%v\n", key, flat[key])
 	}
 	if err := tw.Flush(); err != nil {
-		return nil, fmt.Errorf("failed to flush table: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to flush table", err)
 	}
 	return []byte(builder.String()), nil
 }
@@ -314,12 +315,12 @@ func serializeTable(data any) ([]byte, error) {
 func WriteToFile(path string, data []byte) error {
 	file, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("failed to create file: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to create file", err)
 	}
 	defer file.Close()
 
 	if _, err := file.Write(data); err != nil {
-		return fmt.Errorf("failed to write data: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to write data", err)
 	}
 
 	return nil

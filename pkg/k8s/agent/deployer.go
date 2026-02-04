@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	eidoserrors "github.com/NVIDIA/eidos/pkg/errors"
 	"k8s.io/apimachinery/pkg/api/errors"
 )
 
@@ -30,33 +31,33 @@ func (d *Deployer) Deploy(ctx context.Context) error {
 	// Step 0: Check permissions before attempting deployment
 	_, err := d.CheckPermissions(ctx)
 	if err != nil {
-		return fmt.Errorf("insufficient permissions to deploy agent: %w\n\nTo deploy the agent, you need cluster admin privileges or ask your cluster admin to run:\n  kubectl apply -f deployments/eidos-agent/1-deps.yaml\n  kubectl apply -f deployments/eidos-agent/2-job.yaml", err)
+		return eidoserrors.Wrap(eidoserrors.ErrCodeUnauthorized, "insufficient permissions to deploy agent\n\nTo deploy the agent, you need cluster admin privileges or ask your cluster admin to run:\n  kubectl apply -f deployments/eidos-agent/1-deps.yaml\n  kubectl apply -f deployments/eidos-agent/2-job.yaml", err)
 	}
 
 	// Step 1: Ensure RBAC resources (idempotent - reuses if already exists)
 	if err := d.ensureServiceAccount(ctx); err != nil {
-		return fmt.Errorf("failed to create ServiceAccount: %w", err)
+		return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to create ServiceAccount", err)
 	}
 
 	if err := d.ensureRole(ctx); err != nil {
-		return fmt.Errorf("failed to create Role: %w", err)
+		return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to create Role", err)
 	}
 
 	if err := d.ensureRoleBinding(ctx); err != nil {
-		return fmt.Errorf("failed to create RoleBinding: %w", err)
+		return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to create RoleBinding", err)
 	}
 
 	if err := d.ensureClusterRole(ctx); err != nil {
-		return fmt.Errorf("failed to create ClusterRole: %w", err)
+		return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to create ClusterRole", err)
 	}
 
 	if err := d.ensureClusterRoleBinding(ctx); err != nil {
-		return fmt.Errorf("failed to create ClusterRoleBinding: %w", err)
+		return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to create ClusterRoleBinding", err)
 	}
 
 	// Step 2: Ensure Job (delete existing + recreate)
 	if err := d.ensureJob(ctx); err != nil {
-		return fmt.Errorf("failed to create Job: %w", err)
+		return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to create Job", err)
 	}
 
 	return nil
@@ -131,7 +132,7 @@ func (d *Deployer) Cleanup(ctx context.Context, opts CleanupOptions) error {
 
 	// Return combined error if any deletions failed
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to delete %d resource(s):\n  - %s", len(errs), strings.Join(errs, "\n  - "))
+		return eidoserrors.New(eidoserrors.ErrCodeInternal, fmt.Sprintf("failed to delete %d resource(s):\n  - %s", len(errs), strings.Join(errs, "\n  - ")))
 	}
 
 	return nil

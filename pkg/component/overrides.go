@@ -23,6 +23,8 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/NVIDIA/eidos/pkg/errors"
 )
 
 // String constants for override values.
@@ -43,24 +45,24 @@ func ApplyValueOverrides(target any, overrides map[string]string) error {
 
 	targetValue := reflect.ValueOf(target)
 	if targetValue.Kind() != reflect.Ptr {
-		return fmt.Errorf("target must be a pointer to a struct")
+		return errors.New(errors.ErrCodeInvalidRequest, "target must be a pointer to a struct")
 	}
 
 	targetValue = targetValue.Elem()
 	if targetValue.Kind() != reflect.Struct {
-		return fmt.Errorf("target must be a pointer to a struct, got %s", targetValue.Kind())
+		return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("target must be a pointer to a struct, got %s", targetValue.Kind()))
 	}
 
 	// Collect all errors instead of failing on first error
-	var errors []string
+	var errs []string
 	for path, value := range overrides {
 		if err := setFieldByPath(targetValue, path, value); err != nil {
-			errors = append(errors, fmt.Sprintf("%s=%s: %v", path, value, err))
+			errs = append(errs, fmt.Sprintf("%s=%s: %v", path, value, err))
 		}
 	}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("failed to apply overrides: %s", strings.Join(errors, "; "))
+	if len(errs) > 0 {
+		return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("failed to apply overrides: %s", strings.Join(errs, "; ")))
 	}
 
 	return nil
@@ -71,22 +73,22 @@ func ApplyValueOverrides(target any, overrides map[string]string) error {
 // Useful for applying --set flag overrides to values.yaml content.
 func ApplyMapOverrides(target map[string]any, overrides map[string]string) error {
 	if target == nil {
-		return fmt.Errorf("target map cannot be nil")
+		return errors.New(errors.ErrCodeInvalidRequest, "target map cannot be nil")
 	}
 
 	if len(overrides) == 0 {
 		return nil
 	}
 
-	var errors []string
+	var errs []string
 	for path, value := range overrides {
 		if err := setMapValueByPath(target, path, value); err != nil {
-			errors = append(errors, fmt.Sprintf("%s=%s: %v", path, value, err))
+			errs = append(errs, fmt.Sprintf("%s=%s: %v", path, value, err))
 		}
 	}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("failed to apply map overrides: %s", strings.Join(errors, "; "))
+	if len(errs) > 0 {
+		return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("failed to apply map overrides: %s", strings.Join(errs, "; ")))
 	}
 
 	return nil
@@ -106,7 +108,7 @@ func setMapValueByPath(target map[string]any, path, value string) error {
 			if nextMap, ok := next.(map[string]any); ok {
 				current = nextMap
 			} else {
-				return fmt.Errorf("path segment %q exists but is not a map (type: %T)", part, next)
+				return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("path segment %q exists but is not a map (type: %T)", part, next))
 			}
 		} else {
 			// Create a new nested map
@@ -187,15 +189,15 @@ func setFieldByPath(structValue reflect.Value, path, value string) error {
 		// Find field (case-insensitive search)
 		field, found := findField(currentValue, fieldName, part)
 		if !found {
-			return fmt.Errorf("field not found: %s (searching for %s in %s)", path, part, currentValue.Type())
+			return errors.New(errors.ErrCodeNotFound, fmt.Sprintf("field not found: %s (searching for %s in %s)", path, part, currentValue.Type()))
 		}
 
 		if !field.IsValid() {
-			return fmt.Errorf("invalid field: %s", path)
+			return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid field: %s", path))
 		}
 
 		if !field.CanSet() {
-			return fmt.Errorf("cannot set field: %s (field is not settable)", path)
+			return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("cannot set field: %s (field is not settable)", path))
 		}
 
 		if isLast {
@@ -219,7 +221,7 @@ func setFieldByPath(structValue reflect.Value, path, value string) error {
 			reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128,
 			reflect.Array, reflect.Chan, reflect.Func, reflect.Interface, reflect.Map,
 			reflect.Slice, reflect.String, reflect.UnsafePointer:
-			return fmt.Errorf("cannot traverse non-struct field: %s (type: %s)", part, field.Type())
+			return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("cannot traverse non-struct field: %s (type: %s)", part, field.Type()))
 		}
 	}
 
@@ -484,7 +486,7 @@ func setFieldValue(field reflect.Value, value string) error {
 	case reflect.Bool:
 		boolVal, err := parseBool(value)
 		if err != nil {
-			return fmt.Errorf("invalid boolean value %q: %w", value, err)
+			return errors.Wrap(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid boolean value %q", value), err)
 		}
 		field.SetBool(boolVal)
 		return nil
@@ -492,7 +494,7 @@ func setFieldValue(field reflect.Value, value string) error {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		intVal, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return fmt.Errorf("invalid integer value %q: %w", value, err)
+			return errors.Wrap(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid integer value %q", value), err)
 		}
 		field.SetInt(intVal)
 		return nil
@@ -500,7 +502,7 @@ func setFieldValue(field reflect.Value, value string) error {
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		uintVal, err := strconv.ParseUint(value, 10, 64)
 		if err != nil {
-			return fmt.Errorf("invalid unsigned integer value %q: %w", value, err)
+			return errors.Wrap(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid unsigned integer value %q", value), err)
 		}
 		field.SetUint(uintVal)
 		return nil
@@ -508,7 +510,7 @@ func setFieldValue(field reflect.Value, value string) error {
 	case reflect.Float32, reflect.Float64:
 		floatVal, err := strconv.ParseFloat(value, 64)
 		if err != nil {
-			return fmt.Errorf("invalid float value %q: %w", value, err)
+			return errors.Wrap(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid float value %q", value), err)
 		}
 		field.SetFloat(floatVal)
 		return nil
@@ -516,10 +518,10 @@ func setFieldValue(field reflect.Value, value string) error {
 	case reflect.Invalid, reflect.Uintptr, reflect.Complex64, reflect.Complex128,
 		reflect.Array, reflect.Chan, reflect.Func, reflect.Interface, reflect.Map,
 		reflect.Ptr, reflect.Slice, reflect.Struct, reflect.UnsafePointer:
-		return fmt.Errorf("unsupported field type: %s", fieldType)
+		return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("unsupported field type: %s", fieldType))
 	}
 
-	return fmt.Errorf("unsupported field type: %s", fieldType)
+	return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("unsupported field type: %s", fieldType))
 }
 
 // parseBool parses boolean values with support for various formats.
@@ -530,7 +532,7 @@ func parseBool(value string) (bool, error) {
 	case StrFalse, "no", "0", "off", "disabled":
 		return false, nil
 	default:
-		return false, fmt.Errorf("cannot parse %q as boolean", value)
+		return false, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("cannot parse %q as boolean", value))
 	}
 }
 

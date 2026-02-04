@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -98,18 +99,18 @@ func BuildKubeClient(kubeconfig string) (*kubernetes.Clientset, *rest.Config, er
 	if kubeconfig == "" {
 		config, err = rest.InClusterConfig()
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to get in-cluster config: %w", err)
+			return nil, nil, errors.Wrap(errors.ErrCodeInternal, "failed to get in-cluster config", err)
 		}
 	} else {
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to build kube config from %s: %w", kubeconfig, err)
+			return nil, nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to build kube config from %s", kubeconfig), err)
 		}
 	}
 
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+		return nil, nil, errors.Wrap(errors.ErrCodeInternal, "failed to create kubernetes client", err)
 	}
 
 	return client, config, nil

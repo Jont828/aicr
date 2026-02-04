@@ -22,6 +22,7 @@ import (
 	"github.com/NVIDIA/eidos/pkg/bundler/config"
 	"github.com/NVIDIA/eidos/pkg/bundler/result"
 	"github.com/NVIDIA/eidos/pkg/bundler/types"
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/recipe"
 )
 
@@ -70,7 +71,7 @@ func Register(bundleType types.BundleType, factory Factory) error {
 	defer globalMu.Unlock()
 
 	if _, exists := globalFactories[bundleType]; exists {
-		return fmt.Errorf("bundler type %s already registered", bundleType)
+		return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("bundler type %s already registered", bundleType))
 	}
 
 	globalFactories[bundleType] = factory
@@ -170,7 +171,7 @@ func (r *Registry) Unregister(bundleType types.BundleType) error {
 	defer r.mu.Unlock()
 
 	if _, ok := r.bundlers[bundleType]; !ok {
-		return fmt.Errorf("bundler type %s not registered", bundleType)
+		return errors.New(errors.ErrCodeNotFound, fmt.Sprintf("bundler type %s not registered", bundleType))
 	}
 
 	delete(r.bundlers, bundleType)

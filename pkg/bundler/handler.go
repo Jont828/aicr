@@ -18,7 +18,6 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -192,7 +191,7 @@ func streamZipResponse(w http.ResponseWriter, dir string, output *result.Output)
 	// Walk the directory and add all files to zip
 	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return fmt.Errorf("walk error: %w", err)
+			return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "walk error", err)
 		}
 
 		// Skip the root directory itself
@@ -203,13 +202,13 @@ func streamZipResponse(w http.ResponseWriter, dir string, output *result.Output)
 		// Get relative path for zip entry
 		relPath, err := filepath.Rel(dir, path)
 		if err != nil {
-			return fmt.Errorf("failed to get relative path: %w", err)
+			return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to get relative path", err)
 		}
 
 		// Create zip file header
 		header, err := zip.FileInfoHeader(info)
 		if err != nil {
-			return fmt.Errorf("failed to create file header: %w", err)
+			return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to create file header", err)
 		}
 		header.Name = relPath
 
@@ -225,19 +224,19 @@ func streamZipResponse(w http.ResponseWriter, dir string, output *result.Output)
 
 		writer, err := zw.CreateHeader(header)
 		if err != nil {
-			return fmt.Errorf("failed to create zip entry: %w", err)
+			return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to create zip entry", err)
 		}
 
 		// Open and copy file content
 		file, err := os.Open(path)
 		if err != nil {
-			return fmt.Errorf("failed to open file: %w", err)
+			return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to open file", err)
 		}
 		defer file.Close()
 
 		_, err = io.Copy(writer, file)
 		if err != nil {
-			return fmt.Errorf("failed to copy file content: %w", err)
+			return eidoserrors.Wrap(eidoserrors.ErrCodeInternal, "failed to copy file content", err)
 		}
 
 		return nil

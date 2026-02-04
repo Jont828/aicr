@@ -33,6 +33,7 @@
 package recipe
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/NVIDIA/eidos/pkg/measurement"
@@ -85,8 +86,8 @@ func TestRecipe_Validate(t *testing.T) {
 				t.Errorf("Recipe.Validate() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if tt.wantErr && err.Error() != tt.errMsg {
-				t.Errorf("Recipe.Validate() error = %v, want %v", err.Error(), tt.errMsg)
+			if tt.wantErr && !strings.Contains(err.Error(), tt.errMsg) {
+				t.Errorf("Recipe.Validate() error = %v, want to contain %v", err.Error(), tt.errMsg)
 			}
 		})
 	}
@@ -216,8 +217,8 @@ func TestRecipe_ValidateStructure(t *testing.T) {
 				t.Errorf("Recipe.ValidateStructure() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if tt.wantErr && err.Error() != tt.errMsg {
-				t.Errorf("Recipe.ValidateStructure() error = %v, want %v", err.Error(), tt.errMsg)
+			if tt.wantErr && !strings.Contains(err.Error(), tt.errMsg) {
+				t.Errorf("Recipe.ValidateStructure() error = %v, want to contain %v", err.Error(), tt.errMsg)
 			}
 		})
 	}
@@ -315,7 +316,7 @@ func TestRecipe_ValidateMeasurementExists(t *testing.T) {
 				return
 			}
 			if tt.wantErr && err != nil {
-				if tt.errContains != "" && err.Error() != tt.errContains {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("Recipe.ValidateMeasurementExists() error = %v, want to contain %v", err.Error(), tt.errContains)
 				}
 			}
@@ -420,7 +421,7 @@ func TestRecipe_ValidateSubtypeExists(t *testing.T) {
 				return
 			}
 			if tt.wantErr && err != nil {
-				if tt.errContains != "" && err.Error() != tt.errContains {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("Recipe.ValidateSubtypeExists() error = %v, want to contain %v", err.Error(), tt.errContains)
 				}
 			}
@@ -511,7 +512,7 @@ func TestValidateRequiredKeys(t *testing.T) {
 				return
 			}
 			if tt.wantErr && err != nil {
-				if tt.errContains != "" && err.Error() != tt.errContains {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("ValidateRequiredKeys() error = %v, want to contain %v", err.Error(), tt.errContains)
 				}
 			}

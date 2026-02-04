@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	authv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -65,7 +66,7 @@ func (d *Deployer) CheckPermissions(ctx context.Context) ([]PermissionCheck, err
 	for _, check := range requiredChecks {
 		allowed, reason, err := d.checkPermission(ctx, check.resource, check.verb, check.namespace)
 		if err != nil {
-			return checks, fmt.Errorf("failed to check permission for %s %s: %w", check.verb, check.resource, err)
+			return checks, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to check permission for %s %s", check.verb, check.resource), err)
 		}
 
 		result := PermissionCheck{
@@ -88,8 +89,8 @@ func (d *Deployer) CheckPermissions(ctx context.Context) ([]PermissionCheck, err
 	}
 
 	if len(missingPermissions) > 0 {
-		return checks, fmt.Errorf("missing required permissions:\n  - %s",
-			strings.Join(missingPermissions, "\n  - "))
+		return checks, errors.New(errors.ErrCodeUnauthorized, fmt.Sprintf("missing required permissions:\n  - %s",
+			strings.Join(missingPermissions, "\n  - ")))
 	}
 
 	return checks, nil

@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/NVIDIA/eidos/pkg/measurement"
 )
@@ -44,6 +45,55 @@ func TestReleaseCollector_Collect_ContextCancellation(t *testing.T) {
 
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("Expected context.Canceled, got %v", err)
+	}
+}
+
+func TestReleaseCollector_Collect_ContextTimeout(t *testing.T) {
+	// Create a context with very short timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	defer cancel()
+
+	// Wait for context to timeout
+	time.Sleep(10 * time.Millisecond)
+
+	collector := &Collector{}
+	m, err := collector.Collect(ctx)
+
+	if err == nil {
+		// On some systems, the read may complete before context check
+		t.Skip("Context timeout timing dependent")
+	}
+
+	if m != nil {
+		t.Error("Expected nil measurement on timeout")
+	}
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Expected context.DeadlineExceeded, got %v", err)
+	}
+}
+
+func TestReleaseCollector_ErrorRecovery_MissingFile(t *testing.T) {
+	// Temporarily override the file path variables to non-existent paths
+	originalPrimary := filePathReleasePrimary
+	originalFallback := filePathReleaseFallback
+	defer func() {
+		filePathReleasePrimary = originalPrimary
+		filePathReleaseFallback = originalFallback
+	}()
+	filePathReleasePrimary = "/nonexistent/path/os-release"
+	filePathReleaseFallback = "/also/nonexistent/os-release"
+
+	ctx := context.TODO()
+	collector := &Collector{}
+	subtype, err := collector.collectRelease(ctx)
+
+	// Should fail gracefully when both files are missing
+	if err == nil {
+		t.Error("Expected error when both release files are missing")
+	}
+	if subtype != nil {
+		t.Error("Expected nil subtype when both release files are missing")
 	}
 }
 

@@ -18,6 +18,8 @@ package recipe
 import (
 	"fmt"
 	"sort"
+
+	"github.com/NVIDIA/eidos/pkg/errors"
 )
 
 // ComponentType represents the type of component deployment.
@@ -345,7 +347,7 @@ func (s *RecipeMetadataSpec) ValidateDependencies() error {
 	for _, c := range s.ComponentRefs {
 		for _, dep := range c.DependencyRefs {
 			if !known[dep] {
-				return fmt.Errorf("component %q references unknown dependency %q", c.Name, dep)
+				return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("component %q references unknown dependency %q", c.Name, dep))
 			}
 		}
 	}
@@ -395,7 +397,7 @@ func (s *RecipeMetadataSpec) detectCycles() error {
 				cyclePath := make([]string, len(path)-cycleStart+1)
 				copy(cyclePath, path[cycleStart:])
 				cyclePath[len(cyclePath)-1] = neighbor
-				return fmt.Errorf("circular dependency detected: %v", cyclePath)
+				return errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("circular dependency detected: %v", cyclePath))
 			}
 		}
 
@@ -491,7 +493,7 @@ func (s *RecipeMetadataSpec) TopologicalSort() ([]string, error) {
 
 	// Check if all nodes were processed (no cycles)
 	if len(result) != len(s.ComponentRefs) {
-		return nil, fmt.Errorf("cannot determine deployment order: circular dependencies exist")
+		return nil, errors.New(errors.ErrCodeInvalidRequest, "cannot determine deployment order: circular dependencies exist")
 	}
 
 	return result, nil

@@ -16,9 +16,9 @@ package k8s
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
+	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/k8s/client"
 	"github.com/NVIDIA/eidos/pkg/measurement"
 	"k8s.io/client-go/kubernetes"
@@ -47,25 +47,25 @@ func (k *Collector) Collect(ctx context.Context) (*measurement.Measurement, erro
 	// Cluster Version
 	versions, err := k.collectServer(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to collect server version: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to collect server version", err)
 	}
 
 	// Cluster Images
 	images, err := k.collectContainerImages(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to collect container images: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to collect container images", err)
 	}
 
 	// Cluster Policies
 	policies, err := k.collectClusterPolicies(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to collect cluster policies: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to collect cluster policies", err)
 	}
 
 	// Node
 	node, err := k.collectNode(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to collect node: %w", err)
+		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to collect node", err)
 	}
 
 	// Build measurement using builder pattern
@@ -90,7 +90,7 @@ func (k *Collector) getClient() error {
 	var err error
 	k.ClientSet, k.RestConfig, err = client.GetKubeClient()
 	if err != nil {
-		return fmt.Errorf("failed to get kubernetes client: %w", err)
+		return errors.Wrap(errors.ErrCodeInternal, "failed to get kubernetes client", err)
 	}
 	return nil
 }
