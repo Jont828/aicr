@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.6] - 2026-02-11
+
+### Bug Fixes
+
+- Increase goreleaser release timeout from 30m to 60m by [@mchmarny](https://github.com/mchmarny)
+
 ## [0.5.5] - 2026-02-11
 
 ### Bug Fixes
