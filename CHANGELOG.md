@@ -4,21 +4,6 @@ All notable changes to this project will be documented in this file.
 
 ## [0.6.1] - 2026-02-13
 
-### CI/CD
-
-- Add actions:read permission to unit test job by [@mchmarny](https://github.com/mchmarny)
-- Deduplicate test jobs into reusable qualification workflow by [@mchmarny](https://github.com/mchmarny)
-
-### Tasks
-
-- Cleanup changelog by [@mchmarny](https://github.com/mchmarny)
-- Remove dead symlink by [@mchmarny](https://github.com/mchmarny)
-- Rename ai conformance job by [@mchmarny](https://github.com/mchmarny)
-- Update on push job names by [@mchmarny](https://github.com/mchmarny)
-- Rename jobs in qualification by [@mchmarny](https://github.com/mchmarny)
-
-## [0.6.0] - 2026-02-13
-
 ### Features
 
 - *(skyhook-customizations)* Use overrides and switch to nvidia_tuned  by [@ayuskauskas](https://github.com/ayuskauskas)
@@ -37,6 +22,7 @@ All notable changes to this project will be documented in this file.
 - Add GPU smoke test workflow using nvkind  by [@dims](https://github.com/dims)
 - Enable copy-pr-bot by [@dims](https://github.com/dims)
 - Setup vendoring for golang  by [@lockwobr](https://github.com/lockwobr)
+- Deduplicate test jobs into reusable qualification workflow by [@mchmarny](https://github.com/mchmarny)
 
 ### Tasks
 
