@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [0.6.0] - 2026-02-13
 
+### Features
+
+- *(skyhook-customizations)* Use overrides and switch to nvidia_tuned  by [@ayuskauskas](https://github.com/ayuskauskas)
+- Vendor Gateway API Inference Extension CRDs (v1.3.0)  by [@yuanchen8911](https://github.com/yuanchen8911)
+- *(test)* Add standalone resource existence checker for ai-conformance  by [@dims](https://github.com/dims)
+
 ### Bug Fixes
 
 - Protect system namespaces from deletion in undeploy.sh  by [@yuanchen8911](https://github.com/yuanchen8911)
@@ -14,53 +20,27 @@ All notable changes to this project will be documented in this file.
 ### CI/CD
 
 - Add GPU smoke test workflow using nvkind  by [@dims](https://github.com/dims)
-
-### Features
-
-- *(skyhook-customizations)* Use overrides and switch to nvidia_tuned  by [@ayuskauskas](https://github.com/ayuskauskas)
-- Vendor Gateway API Inference Extension CRDs (v1.3.0)  by [@yuanchen8911](https://github.com/yuanchen8911)
-- *(test)* Add standalone resource existence checker for ai-conformance  by [@dims](https://github.com/dims)
-
-### Other
-
-- Enable copy-pr-bot 
-
-Signed-off-by: Davanum Srinivas <dsrinivas@nvidia.com> by [@dims](https://github.com/dims)
+- Enable copy-pr-bot by [@dims](https://github.com/dims)
 - Setup vendoring for golang  by [@lockwobr](https://github.com/lockwobr)
-
-### Refactor
-
-- Code quality cleanup across codebase  by [@mchmarny](https://github.com/mchmarny)
-- Rename skyhook customization manifest to remove training suffix  by [@yuanchen8911](https://github.com/yuanchen8911)
-- *(recipe)* Move embedded data to recipes/ at repo root  by [@lockwobr](https://github.com/lockwobr)
-- Rename .versions.yaml to .settings.yaml, consolidate settings, improve code quality by [@mchmarny](https://github.com/mchmarny)
 
 ### Tasks
 
-- Update cuj2 by [@mchmarny](https://github.com/mchmarny)
-- Update cuj2 by [@mchmarny](https://github.com/mchmarny)
-- Add demo slide by [@mchmarny](https://github.com/mchmarny)
-- Add data link by [@mchmarny](https://github.com/mchmarny)
 - Exclude git from sandbox for GPG commit signing by [@mchmarny](https://github.com/mchmarny)
+- Code quality cleanup across codebase  by [@mchmarny](https://github.com/mchmarny)
+- Rename skyhook customization manifest to remove training suffix  by [@yuanchen8911](https://github.com/yuanchen8911)
+- *(recipe)* Move embedded data to recipes/ at repo root  by [@lockwobr](https://github.com/lockwobr)
 
 ## [0.5.16] - 2026-02-12
 
 ### Bug Fixes
 
 - Use POSIX-compatible redirects in KWOK parallel test script  by [@yuanchen8911](https://github.com/yuanchen8911)
-
+- KubeFlow patches  by [@coffeepac](https://github.com/coffeepac)
+  
 ### Features
 
 - Add tools/describe for overlay composition visualization by [@mchmarny](https://github.com/mchmarny)
 - Restructure inference overlay hierarchy  by [@yuanchen8911](https://github.com/yuanchen8911)
-
-### Other
-
-- KubeFlow patches  by [@coffeepac](https://github.com/coffeepac)
-
-### Tasks
-
-- Update CUJs by [@mchmarny](https://github.com/mchmarny)
 
 ## [0.5.15] - 2026-02-11
 
@@ -75,10 +55,6 @@ Signed-off-by: Davanum Srinivas <dsrinivas@nvidia.com> by [@dims](https://github
 
 - Resolve EKS deployment issues for multiple components  by [@yuanchen8911](https://github.com/yuanchen8911)
 - Preserve version prefix in deploy.sh for helm install  by [@yuanchen8911](https://github.com/yuanchen8911)
-
-### Tasks
-
-- Clean up changelog by [@mchmarny](https://github.com/mchmarny)
 
 ## [0.5.13] - 2026-02-11
 
