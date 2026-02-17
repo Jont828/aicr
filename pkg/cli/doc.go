@@ -42,7 +42,7 @@
 // Generates optimized configuration recipes based on either:
 //   - Specified environment parameters (OS, service, GPU, intent)
 //   - Existing system snapshot (analyzes snapshot to extract parameters)
-//   - Criteria file (Kubernetes-style YAML/JSON with kind: recipeCriteria)
+//   - Criteria file (Kubernetes-style YAML/JSON with kind: RecipeCriteria)
 //
 // # Criteria File Mode
 //
