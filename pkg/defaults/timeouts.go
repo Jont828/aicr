@@ -111,3 +111,22 @@ const (
 	// CLISnapshotTimeout is the default timeout for snapshot operations.
 	CLISnapshotTimeout = 5 * time.Minute
 )
+
+// Pod operation timeouts for validation and agent operations.
+const (
+	// PodWaitTimeout is the maximum time to wait for pod operations to complete.
+	PodWaitTimeout = 10 * time.Minute
+
+	// PodPollInterval is the interval for polling pod status.
+	// Used in legacy polling code (to be replaced with watch API in Phase 3).
+	PodPollInterval = 500 * time.Millisecond
+
+	// ValidationPodTimeout is the timeout for validation pod operations.
+	ValidationPodTimeout = 10 * time.Minute
+
+	// DiagnosticTimeout is the timeout for collecting diagnostic information.
+	DiagnosticTimeout = 2 * time.Minute
+
+	// PodReadyTimeout is the timeout for waiting for pods to become ready.
+	PodReadyTimeout = 2 * time.Minute
+)

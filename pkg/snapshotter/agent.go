@@ -425,7 +425,7 @@ func (n *NodeSnapshotter) measureWithAgent(ctx context.Context) error {
 	// Write snapshot to final destination
 	switch {
 	case finalOutput == "" || finalOutput == "-" || finalOutput == serializer.StdoutURI:
-		// Write to stdout
+		// Output snapshot data to stdout for consumption by caller
 		fmt.Println(string(snapshotData))
 	case strings.HasPrefix(finalOutput, serializer.ConfigMapURIScheme):
 		// Already in ConfigMap (written by Job)

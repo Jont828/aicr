@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NVIDIA/eidos/pkg/defaults"
 	"github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/k8s/client"
 	"gopkg.in/yaml.v3"
@@ -398,7 +399,8 @@ func fromConfigMapWithKubeconfig[T any](namespace, name, kubeconfig string) (*T,
 		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to get kubernetes client", err)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), defaults.ConfigMapWriteTimeout)
+	defer cancel()
 	cm, err := k8sClient.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, errors.Wrap(errors.ErrCodeNotFound, fmt.Sprintf("failed to get ConfigMap %s/%s", namespace, name), err)

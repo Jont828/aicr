@@ -116,6 +116,7 @@ tags
 
 # Claude
 .claude/settings.local.json
+docs/plans
 
 # Validator generator scaffolding output
 pkg/validator/checks/**/*_README.md

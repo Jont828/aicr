@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 
+	eidosErrors "github.com/NVIDIA/eidos/pkg/errors"
 	"github.com/NVIDIA/eidos/pkg/validator/checks"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,7 +32,7 @@ func FindSchedulableGpuNodes(ctx *checks.ValidationContext) ([]v1.Node, error) {
 	// List all nodes in the cluster
 	nodeList, err := ctx.Clientset.CoreV1().Nodes().List(ctx.Context, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list nodes: %w", err)
+		return nil, eidosErrors.Wrap(eidosErrors.ErrCodeInternal, "failed to list nodes", err)
 	}
 
 	var gpuNodes []v1.Node
@@ -59,7 +60,7 @@ func IsNodeGpuBusy(ctx context.Context, client kubernetes.Interface, nodeName st
 	})
 	if err != nil {
 		// If listing pods fails for the node, treat it cautiously as potentially busy or problematic
-		return true, fmt.Errorf("failed to list pods on node %s: %w", nodeName, err)
+		return true, eidosErrors.Wrap(eidosErrors.ErrCodeInternal, fmt.Sprintf("failed to list pods on node %s", nodeName), err)
 	}
 
 	for _, pod := range podList.Items {

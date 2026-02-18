@@ -15,7 +15,6 @@
 package client
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -104,7 +103,9 @@ func BuildKubeClient(kubeconfig string) (*kubernetes.Clientset, *rest.Config, er
 	} else {
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 		if err != nil {
-			return nil, nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to build kube config from %s", kubeconfig), err)
+			return nil, nil, errors.WrapWithContext(errors.ErrCodeInternal, "failed to build kube config", err, map[string]interface{}{
+				"kubeconfig": kubeconfig,
+			})
 		}
 	}
 

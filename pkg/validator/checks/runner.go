@@ -281,7 +281,7 @@ func LoadValidationContext() (*ValidationContext, context.CancelFunc, error) {
 func getNamespaceFromServiceAccount() (string, error) {
 	namespaceBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 	if err != nil {
-		return "", fmt.Errorf("failed to read namespace from service account: %w", err)
+		return "", errors.Wrap(errors.ErrCodeInternal, "failed to read namespace from service account", err)
 	}
 	return strings.TrimSpace(string(namespaceBytes)), nil
 }

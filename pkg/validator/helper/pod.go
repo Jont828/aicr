@@ -24,6 +24,9 @@ import (
 	"testing"
 	"time"
 
+	eidosErrors "github.com/NVIDIA/eidos/pkg/errors"
+
+	"github.com/NVIDIA/eidos/pkg/defaults"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -46,15 +49,15 @@ type PodLifecycle struct {
 func (p *PodLifecycle) CreatePodFromTemplate(ctx context.Context, templatePath string, data map[string]string) (*v1.Pod, error) {
 	pod, err := loadPodFromTemplate(templatePath, data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load template: %w", err)
+		return nil, eidosErrors.Wrap(eidosErrors.ErrCodeInternal, "failed to load template", err)
 	}
 
-	createCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	createCtx, cancel := context.WithTimeout(ctx, defaults.DiagnosticTimeout)
 	defer cancel()
 
 	createdPod, err := p.ClientSet.CoreV1().Pods(p.Namespace).Create(createCtx, pod, metav1.CreateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create pod: %w", err)
+		return nil, eidosErrors.Wrap(eidosErrors.ErrCodeInternal, "failed to create pod", err)
 	}
 
 	p.T.Logf("Successfully created pod %s/%s", createdPod.Namespace, createdPod.Name)
@@ -73,13 +76,13 @@ func (p *PodLifecycle) WaitForPodByName(ctx context.Context, podName string, tim
 	var err error
 
 	// Poll until pod is found or timeout occurs
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(defaults.PodPollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("timed out waiting for pod %s to be created", podName)
+			return nil, eidosErrors.Wrap(eidosErrors.ErrCodeTimeout, "timed out waiting for pod to be created", ctx.Err())
 		case <-ticker.C:
 			foundPod, err = p.ClientSet.CoreV1().Pods(p.Namespace).Get(ctx, podName, metav1.GetOptions{})
 			if err == nil {
@@ -88,7 +91,7 @@ func (p *PodLifecycle) WaitForPodByName(ctx context.Context, podName string, tim
 			}
 			// Continue polling only if pod not found; fail fast on other errors
 			if !errors.IsNotFound(err) {
-				return nil, fmt.Errorf("error getting pod %s: %w", podName, err)
+				return nil, eidosErrors.Wrap(eidosErrors.ErrCodeInternal, "error getting pod", err)
 			}
 		}
 	}
@@ -102,20 +105,20 @@ func (p *PodLifecycle) WaitForPodSuccess(ctx context.Context, pod *v1.Pod, timeo
 	p.T.Logf("Waiting for pod %s to reach Succeeded state...", pod.Name)
 
 	// Poll the pod status instead of using the framework's wait condition
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(defaults.PodPollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			// Get current pod state for error message using a fresh, short-lived context
-			diagCtx, diagCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			diagCtx, diagCancel := context.WithTimeout(context.Background(), defaults.CollectorTimeout)
 			defer diagCancel()
 
 			//nolint:contextcheck // intentionally using a fresh context for diagnostics after parent timeout
 			foundPod, err := p.ClientSet.CoreV1().Pods(p.Namespace).Get(diagCtx, pod.Name, metav1.GetOptions{})
 			if err != nil {
-				return fmt.Errorf("timed out waiting for pod %s to succeed, and failed to get current state: %w", pod.Name, err)
+				return eidosErrors.Wrap(eidosErrors.ErrCodeTimeout, "timed out waiting for pod to succeed, and failed to get current state", err)
 			}
 
 			// Provide detailed information about why it failed
@@ -149,7 +152,7 @@ func (p *PodLifecycle) WaitForPodSuccess(ctx context.Context, pod *v1.Pod, timeo
 				errorMsg += fmt.Sprintf(", Container statuses: [%s]", strings.Join(containerStatuses, "; "))
 			}
 
-			return fmt.Errorf("%s", errorMsg)
+			return eidosErrors.New(eidosErrors.ErrCodeTimeout, errorMsg)
 
 		case <-ticker.C:
 			foundPod, err := p.ClientSet.CoreV1().Pods(p.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
@@ -176,7 +179,7 @@ func (p *PodLifecycle) WaitForPodSuccess(ctx context.Context, pod *v1.Pod, timeo
 				if message != "" {
 					errorMsg += fmt.Sprintf(" (message: %s)", message)
 				}
-				return fmt.Errorf("%s", errorMsg)
+				return eidosErrors.New(eidosErrors.ErrCodeInternal, errorMsg)
 			}
 		}
 	}
@@ -186,7 +189,7 @@ func (p *PodLifecycle) WaitForPodSuccess(ctx context.Context, pod *v1.Pod, timeo
 func (p *PodLifecycle) GetPodLogs(ctx context.Context, pod *v1.Pod) (string, error) {
 	// Check if pod has containers
 	if len(pod.Spec.Containers) == 0 {
-		return "", fmt.Errorf("pod %s has no containers", pod.Name)
+		return "", eidosErrors.New(eidosErrors.ErrCodeInternal, "pod has no containers")
 	}
 
 	logsReq := p.ClientSet.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &v1.PodLogOptions{
@@ -195,7 +198,7 @@ func (p *PodLifecycle) GetPodLogs(ctx context.Context, pod *v1.Pod) (string, err
 
 	logsReader, err := logsReq.Stream(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to get logs stream: %w", err)
+		return "", eidosErrors.Wrap(eidosErrors.ErrCodeInternal, "failed to get logs stream", err)
 	}
 	defer func() {
 		if closeErr := logsReader.Close(); closeErr != nil {
@@ -205,7 +208,7 @@ func (p *PodLifecycle) GetPodLogs(ctx context.Context, pod *v1.Pod) (string, err
 
 	logBytes, err := io.ReadAll(logsReader)
 	if err != nil {
-		return "", fmt.Errorf("failed to read logs: %w", err)
+		return "", eidosErrors.Wrap(eidosErrors.ErrCodeInternal, "failed to read logs", err)
 	}
 
 	return string(logBytes), nil
@@ -213,7 +216,7 @@ func (p *PodLifecycle) GetPodLogs(ctx context.Context, pod *v1.Pod) (string, err
 
 // CleanupPod deletes a pod
 func (p *PodLifecycle) CleanupPod(ctx context.Context, pod *v1.Pod) error {
-	cleanupCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	cleanupCtx, cancel := context.WithTimeout(ctx, defaults.K8sJobCompletionTimeout)
 	defer cancel()
 
 	p.T.Logf("Cleaning up pod %s/%s", pod.Namespace, pod.Name)
@@ -223,7 +226,7 @@ func (p *PodLifecycle) CleanupPod(ctx context.Context, pod *v1.Pod) error {
 // ExecCommandInPod executes a command in a pod and returns stdout, stderr, and any error
 func (p *PodLifecycle) ExecCommandInPod(ctx context.Context, pod *v1.Pod, command []string) (string, string, error) {
 	// Add a reasonable timeout for exec commands to prevent hanging
-	execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	execCtx, cancel := context.WithTimeout(ctx, defaults.K8sCleanupTimeout)
 	defer cancel()
 
 	req := p.ClientSet.CoreV1().RESTClient().Post().
@@ -241,7 +244,7 @@ func (p *PodLifecycle) ExecCommandInPod(ctx context.Context, pod *v1.Pod, comman
 
 	exec, err := remotecommand.NewSPDYExecutor(p.RESTConfig, "POST", req.URL())
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create executor: %w", err)
+		return "", "", eidosErrors.Wrap(eidosErrors.ErrCodeInternal, "failed to create executor", err)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -253,7 +256,7 @@ func (p *PodLifecycle) ExecCommandInPod(ctx context.Context, pod *v1.Pod, comman
 	})
 
 	if err != nil {
-		return stdout.String(), stderr.String(), fmt.Errorf("command execution failed: %w", err)
+		return stdout.String(), stderr.String(), eidosErrors.Wrap(eidosErrors.ErrCodeInternal, "command execution failed", err)
 	}
 
 	return stdout.String(), stderr.String(), nil
@@ -266,17 +269,17 @@ func (p *PodLifecycle) WaitForPodRunning(ctx context.Context, pod *v1.Pod, timeo
 
 	p.T.Logf("Waiting for pod %s to reach Running state...", pod.Name)
 
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(defaults.PodPollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-waitCtx.Done():
-			return fmt.Errorf("timeout waiting for pod %s to reach Running state", pod.Name)
+			return eidosErrors.Wrap(eidosErrors.ErrCodeTimeout, "timeout waiting for pod to reach Running state", waitCtx.Err())
 		case <-ticker.C:
 			foundPod, err := p.ClientSet.CoreV1().Pods(pod.Namespace).Get(waitCtx, pod.Name, metav1.GetOptions{})
 			if err != nil {
-				return fmt.Errorf("failed to get pod %s: %w", pod.Name, err)
+				return eidosErrors.Wrap(eidosErrors.ErrCodeInternal, "failed to get pod", err)
 			}
 
 			switch foundPod.Status.Phase {
@@ -284,7 +287,7 @@ func (p *PodLifecycle) WaitForPodRunning(ctx context.Context, pod *v1.Pod, timeo
 				p.T.Logf("Pod %s is now in Running state", pod.Name)
 				return nil
 			case v1.PodFailed:
-				return fmt.Errorf("pod %s entered Failed phase while waiting for Running", pod.Name)
+				return eidosErrors.New(eidosErrors.ErrCodeInternal, "pod entered Failed phase while waiting for Running")
 			case v1.PodPending, v1.PodSucceeded, v1.PodUnknown:
 				// continue polling
 			}
@@ -297,7 +300,7 @@ func (p *PodLifecycle) WaitForPodRunning(ctx context.Context, pod *v1.Pod, timeo
 func loadPodFromTemplate(templatePath string, data map[string]string) (*v1.Pod, error) {
 	content, err := os.ReadFile(templatePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read template: %w", err)
+		return nil, eidosErrors.Wrap(eidosErrors.ErrCodeInternal, "failed to read template", err)
 	}
 
 	yamlContent := string(content)
@@ -306,7 +309,7 @@ func loadPodFromTemplate(templatePath string, data map[string]string) (*v1.Pod, 
 	}
 	pod := &v1.Pod{}
 	if err := yaml.Unmarshal([]byte(yamlContent), pod); err != nil {
-		return nil, fmt.Errorf("failed to parse template: %w", err)
+		return nil, eidosErrors.Wrap(eidosErrors.ErrCodeInternal, "failed to parse template", err)
 	}
 
 	return pod, nil
