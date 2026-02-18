@@ -12,13 +12,7 @@ All notable changes to this project will be documented in this file.
 ### Features
 
 - *(ci)* Add Dynamo vLLM smoke test and fix etcd/NATS naming  by [@dims](https://github.com/dims)
-
-### Other
-
-- Feat/adding smi test 
-
-Co-authored-by: Mark Chmarny <mark@chmarny.com>
-Co-authored-by: Jayson Du <jaydu@nvidia.com> by [@iamkhaledh](https://github.com/iamkhaledh)
+- Feat/adding smi test by  [@iamkhaledh](https://github.com/iamkhaledh), [@jaydu](https://github.com/jaydu)
 
 ## [0.6.4] - 2026-02-17
 
