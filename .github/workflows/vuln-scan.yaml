@@ -18,6 +18,12 @@ on:
   schedule:
     - cron: '30 7 * * *'
   workflow_dispatch: {}  # allow manual runs for testing
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
   push:
     branches: [main]  # scan main after merges
     paths-ignore:
@@ -29,8 +35,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   SARIF_OUTPUT: 'vulnerability-scan-results.sarif'
