@@ -17,6 +17,7 @@ package validator
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/NVIDIA/eidos/pkg/k8s/client"
 	"github.com/NVIDIA/eidos/pkg/measurement"
@@ -662,6 +663,69 @@ func TestValidatePhases_ContextCanceled(t *testing.T) {
 	}
 }
 
+func TestValidatePhases_SummaryCounts(t *testing.T) {
+	snapshot := createTestSnapshot()
+
+	tests := []struct {
+		name        string
+		recipe      *recipe.RecipeResult
+		phases      []ValidationPhaseName
+		wantPassed  int
+		wantFailed  int
+		wantSkipped int
+		wantTotal   int
+	}{
+		{
+			name: "readiness only configured - others skipped",
+			recipe: &recipe.RecipeResult{
+				Constraints: []recipe.Constraint{
+					{Name: "K8s.server.version", Value: ">= 1.32.4"},
+					{Name: "OS.release.ID", Value: "ubuntu"},
+				},
+				// No Deployment/Performance/Conformance configured
+			},
+			phases:      []ValidationPhaseName{PhaseReadiness, PhaseDeployment, PhasePerformance, PhaseConformance},
+			wantPassed:  1, // readiness
+			wantSkipped: 3, // deployment, performance, conformance
+			wantTotal:   4,
+		},
+		{
+			name: "single readiness phase",
+			recipe: &recipe.RecipeResult{
+				Constraints: []recipe.Constraint{
+					{Name: "K8s.server.version", Value: ">= 1.32.4"},
+				},
+			},
+			phases:     []ValidationPhaseName{PhaseReadiness},
+			wantPassed: 1, // readiness passes, summary reflects constraint count
+			wantTotal:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := New(WithVersion("test"), WithNoCluster(true))
+			result, err := v.ValidatePhases(context.Background(), tt.phases, tt.recipe, snapshot)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Summary.Passed != tt.wantPassed {
+				t.Errorf("Summary.Passed = %d, want %d", result.Summary.Passed, tt.wantPassed)
+			}
+			if result.Summary.Failed != tt.wantFailed {
+				t.Errorf("Summary.Failed = %d, want %d", result.Summary.Failed, tt.wantFailed)
+			}
+			if result.Summary.Skipped != tt.wantSkipped {
+				t.Errorf("Summary.Skipped = %d, want %d", result.Summary.Skipped, tt.wantSkipped)
+			}
+			if result.Summary.Total != tt.wantTotal {
+				t.Errorf("Summary.Total = %d, want %d", result.Summary.Total, tt.wantTotal)
+			}
+		})
+	}
+}
+
 // TestMapTestStatusToValidationStatus tests the mapping of test status strings to validation status
 func TestMapTestStatusToValidationStatus(t *testing.T) {
 	tests := []struct {
@@ -1153,6 +1217,55 @@ func TestBuildTestPattern(t *testing.T) {
 			}
 			if result.ExpectedTests != tt.wantExpectedTests {
 				t.Errorf("buildTestPattern() expectedTests = %d, want %d", result.ExpectedTests, tt.wantExpectedTests)
+			}
+		})
+	}
+}
+
+func TestResolvePhaseTimeout(t *testing.T) {
+	tests := []struct {
+		name           string
+		phase          *recipe.ValidationPhase
+		defaultTimeout time.Duration
+		want           time.Duration
+	}{
+		{
+			name:           "nil phase uses default",
+			phase:          nil,
+			defaultTimeout: DefaultDeploymentTimeout,
+			want:           DefaultDeploymentTimeout,
+		},
+		{
+			name:           "empty timeout uses default",
+			phase:          &recipe.ValidationPhase{},
+			defaultTimeout: DefaultReadinessTimeout,
+			want:           DefaultReadinessTimeout,
+		},
+		{
+			name:           "recipe timeout overrides default",
+			phase:          &recipe.ValidationPhase{Timeout: "15m"},
+			defaultTimeout: DefaultDeploymentTimeout,
+			want:           15 * time.Minute,
+		},
+		{
+			name:           "recipe timeout in seconds",
+			phase:          &recipe.ValidationPhase{Timeout: "300s"},
+			defaultTimeout: DefaultDeploymentTimeout,
+			want:           5 * time.Minute,
+		},
+		{
+			name:           "invalid timeout falls back to default",
+			phase:          &recipe.ValidationPhase{Timeout: "not-a-duration"},
+			defaultTimeout: DefaultPerformanceTimeout,
+			want:           DefaultPerformanceTimeout,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolvePhaseTimeout(tt.phase, tt.defaultTimeout)
+			if got != tt.want {
+				t.Errorf("resolvePhaseTimeout() = %v, want %v", got, tt.want)
 			}
 		})
 	}
