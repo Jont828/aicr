@@ -1126,6 +1126,9 @@ test_validate_chainsaw_healthcheck() {
   # Setup: Create fake GPU operator deployment
   msg "--- Setup: Create fake GPU operator deployment ---"
   kubectl create namespace gpu-operator --dry-run=client -o yaml | kubectl apply -f - 2>&1 || true
+  # Clean up leftover validator pods from previous tests that ran in gpu-operator namespace.
+  # The chainsaw health check asserts no pods are in Failed/Pending/Unknown phase.
+  kubectl delete jobs,pods -n gpu-operator -l app=aicr-validator --ignore-not-found 2>&1 || true
 
   cat <<YAML | kubectl apply -f - 2>&1
 apiVersion: apps/v1
@@ -1160,8 +1163,11 @@ YAML
     return 0
   fi
 
-  # Wait for deployment to be available
-  kubectl wait --for=condition=available deployment/gpu-operator -n gpu-operator --timeout=60s 2>&1 || true
+  # Wait for deployment to be available (must succeed for pod phase health check)
+  if ! kubectl wait --for=condition=available deployment/gpu-operator -n gpu-operator --timeout=60s 2>&1; then
+    skip "validate/chainsaw-healthcheck" "GPU operator deployment not available"
+    return 0
+  fi
 
   # Create recipe that includes gpu-operator with deployment phase check
   local recipe_file="${validate_dir}/recipe-chainsaw.yaml"
@@ -1182,8 +1188,9 @@ RECIPE
 
   # Test 1: Chainsaw health check should pass using embedded registry
   # The embedded registry.yaml has healthCheck.assertFile for gpu-operator,
-  # and the embedded assert file (recipes/checks/gpu-operator/assert.yaml)
-  # checks that readyReplicas is 1. No --data needed.
+  # and the embedded health check file (recipes/checks/gpu-operator/health-check.yaml)
+  # uses chainsaw error operations to assert no pods in Pending/Failed/Unknown phase.
+  # --validation-namespace isolates the validator Job from the scanned namespace.
   msg "--- Test: Chainsaw health check via embedded registry (should pass) ---"
 
   echo -e "${DIM}  \$ aicr validate --phase deployment --recipe recipe.yaml${NC}"
@@ -1194,6 +1201,7 @@ RECIPE
     --recipe "$recipe_file" \
     --snapshot "cm://${SNAPSHOT_NAMESPACE}/${SNAPSHOT_CM}" \
     --phase deployment \
+    --validation-namespace aicr-validation \
     --image "${AICR_VALIDATOR_IMAGE}" \
     --output "$result_file" 2>&1) || validate_exit=$?
 
@@ -1230,21 +1238,33 @@ components:
   - name: gpu-operator
     displayName: GPU Operator
     healthCheck:
-      assertFile: checks/gpu-operator/assert.yaml
+      assertFile: checks/gpu-operator/health-check.yaml
     helm:
       defaultRepository: https://helm.ngc.nvidia.com/nvidia
       defaultChart: nvidia/gpu-operator
       defaultNamespace: gpu-operator
 REGISTRY
 
-  cat > "${data_dir}/checks/gpu-operator/assert.yaml" <<'ASSERT'
-apiVersion: apps/v1
-kind: Deployment
+  cat > "${data_dir}/checks/gpu-operator/health-check.yaml" <<'ASSERT'
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
 metadata:
-  name: nonexistent-gpu-operator
-  namespace: gpu-operator
-status:
-  availableReplicas: 1
+  name: gpu-operator-health-check
+spec:
+  timeouts:
+    assert: 30s
+  steps:
+    - name: validate-nonexistent-deployment
+      try:
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: nonexistent-gpu-operator
+                namespace: gpu-operator
+              status:
+                availableReplicas: 1
 ASSERT
 
   echo -e "${DIM}  \$ aicr validate --phase deployment --data <dir> --recipe recipe.yaml (should fail)${NC}"
@@ -1255,6 +1275,7 @@ ASSERT
     --recipe "$recipe_file" \
     --snapshot "cm://${SNAPSHOT_NAMESPACE}/${SNAPSHOT_CM}" \
     --phase deployment \
+    --validation-namespace aicr-validation \
     --data "${data_dir}" \
     --image "${AICR_VALIDATOR_IMAGE}" \
     --output "$result_file_fail" 2>&1) || validate_fail_exit=$?
