@@ -76,6 +76,8 @@ components:
     displayName: network-operator
     valueOverrideKeys:
       - networkoperator
+    healthCheck:
+      assertFile: checks/network-operator/health-check.yaml
     helm:
       defaultRepository: https://helm.ngc.nvidia.com/nvidia
       defaultChart: nvidia/network-operator
@@ -92,6 +94,8 @@ components:
     valueOverrideKeys:
       - awsefa
       - efa
+    healthCheck:
+      assertFile: checks/aws-efa/health-check.yaml
     helm:
       defaultRepository: https://aws.github.io/eks-charts
       defaultChart: aws-efa-k8s-device-plugin
@@ -108,6 +112,8 @@ components:
     displayName: cert-manager
     valueOverrideKeys:
       - certmanager
+    healthCheck:
+      assertFile: checks/cert-manager/health-check.yaml
     helm:
       defaultRepository: https://charts.jetstack.io
       defaultChart: jetstack/cert-manager
@@ -130,6 +136,8 @@ components:
     displayName: skyhook
     valueOverrideKeys:
       - skyhook
+    healthCheck:
+      assertFile: checks/skyhook-operator/health-check.yaml
     helm:
       defaultRepository: https://nvidia.github.io/skyhook
       defaultChart: skyhook-operator
@@ -183,6 +191,8 @@ components:
     displayName: nvsentinel
     valueOverrideKeys:
       - nv-sentinel
+    healthCheck:
+      assertFile: checks/nvsentinel/health-check.yaml
     helm:
       defaultRepository: https://helm.ngc.nvidia.com/nvidia
       defaultChart: nvidia/nvsentinel
@@ -207,6 +217,8 @@ components:
     displayName: nvidia-dra-driver-gpu
     valueOverrideKeys:
       - dradriver
+    healthCheck:
+      assertFile: checks/nvidia-dra-driver-gpu/health-check.yaml
     helm:
       defaultRepository: https://helm.ngc.nvidia.com/nvidia
       defaultChart: nvidia/nvidia-dra-driver-gpu
@@ -228,6 +240,8 @@ components:
     valueOverrideKeys:
       - prometheus
       - kubeprometheusstack
+    healthCheck:
+      assertFile: checks/kube-prometheus-stack/health-check.yaml
     helm:
       defaultRepository: https://prometheus-community.github.io/helm-charts
       defaultChart: prometheus-community/kube-prometheus-stack
@@ -258,6 +272,8 @@ components:
     displayName: prometheus-adapter
     valueOverrideKeys:
       - prometheusadapter
+    healthCheck:
+      assertFile: checks/prometheus-adapter/health-check.yaml
     helm:
       defaultRepository: https://prometheus-community.github.io/helm-charts
       defaultChart: prometheus-community/prometheus-adapter
@@ -275,6 +291,8 @@ components:
     valueOverrideKeys:
       - ebscsidriver
       - awsebscsidriver
+    healthCheck:
+      assertFile: checks/aws-ebs-csi-driver/health-check.yaml
     helm:
       defaultRepository: https://kubernetes-sigs.github.io/aws-ebs-csi-driver
       defaultChart: aws-ebs-csi-driver/aws-ebs-csi-driver
@@ -297,6 +315,8 @@ components:
     displayName: k8s-ephemeral-storage-metrics
     valueOverrideKeys:
       - k8sephemeralstoragemetrics
+    healthCheck:
+      assertFile: checks/k8s-ephemeral-storage-metrics/health-check.yaml
     helm:
       defaultRepository: https://jmcgrath207.github.io/k8s-ephemeral-storage-metrics/chart
       defaultChart: k8s-ephemeral-storage-metrics/k8s-ephemeral-storage-metrics
@@ -312,6 +332,8 @@ components:
     displayName: kai-scheduler
     valueOverrideKeys:
       - kaischeduler
+    healthCheck:
+      assertFile: checks/kai-scheduler/health-check.yaml
     helm:
       defaultRepository: oci://ghcr.io/nvidia/kai-scheduler
       defaultChart: kai-scheduler
@@ -339,6 +361,8 @@ components:
     valueOverrideKeys:
       - dynamoplatform
       - dynamo
+    healthCheck:
+      assertFile: checks/dynamo-platform/health-check.yaml
     helm:
       defaultRepository: https://helm.ngc.nvidia.com/nvidia/ai-dynamo
       defaultChart: dynamo-platform
@@ -367,6 +391,8 @@ components:
     displayName: kgateway
     valueOverrideKeys:
       - kgateway
+    healthCheck:
+      assertFile: checks/kgateway/health-check.yaml
     helm:
       defaultRepository: oci://cr.kgateway.dev/kgateway-dev/charts
       defaultChart: kgateway
@@ -384,6 +410,8 @@ components:
     valueOverrideKeys:
       - kubeflowtrainer
       - trainer
+    healthCheck:
+      assertFile: checks/kubeflow-trainer/health-check.yaml
     helm:
       defaultRepository: oci://ghcr.io/kubeflow/charts
       defaultChart: kubeflow-trainer
