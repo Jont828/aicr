@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NVIDIA/aicr/pkg/defaults"
 	"github.com/NVIDIA/aicr/pkg/errors"
 	"github.com/NVIDIA/aicr/pkg/k8s/pod"
 	corev1 "k8s.io/api/core/v1"
@@ -248,8 +249,14 @@ func parseGoTestJSON(jsonOutput string) (*ValidationResult, error) {
 	testResults := make(map[string]*TestResult)
 	var overallOutput []string
 
+	// Track incomplete output lines per test.
+	// go test -json splits long t.Logf output across multiple "output" events.
+	// A complete line has a trailing \n; a partial line does not.
+	pendingOutput := make(map[string]string)
+
 	// Split JSON output by lines
 	scanner := bufio.NewScanner(strings.NewReader(jsonOutput))
+	scanner.Buffer(make([]byte, defaults.LogScannerBufferSize), defaults.LogScannerBufferSize)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -267,8 +274,16 @@ func parseGoTestJSON(jsonOutput string) (*ValidationResult, error) {
 			if event.Action == statusFail {
 				result.Status = statusFail
 			}
-			if event.Output != "" {
-				overallOutput = append(overallOutput, event.Output)
+			if event.Action == "output" && event.Output != "" {
+				key := ""
+				pending := pendingOutput[key]
+				combined := pending + event.Output
+				if strings.HasSuffix(combined, "\n") {
+					overallOutput = append(overallOutput, strings.TrimSuffix(combined, "\n"))
+					delete(pendingOutput, key)
+				} else {
+					pendingOutput[key] = combined
+				}
 			}
 			continue
 		}
@@ -309,8 +324,28 @@ func parseGoTestJSON(jsonOutput string) (*ValidationResult, error) {
 			}
 		case "output":
 			if event.Output != "" {
-				test.Output = append(test.Output, strings.TrimSuffix(event.Output, "\n"))
+				pending := pendingOutput[testName]
+				combined := pending + event.Output
+				if strings.HasSuffix(combined, "\n") {
+					test.Output = append(test.Output, strings.TrimSuffix(combined, "\n"))
+					delete(pendingOutput, testName)
+				} else {
+					pendingOutput[testName] = combined
+				}
 			}
+		}
+	}
+
+	// Flush any remaining partial output lines (edge case: last line lacks \n).
+	for key, pending := range pendingOutput {
+		if pending == "" {
+			continue
+		}
+		line := strings.TrimSuffix(pending, "\n")
+		if key == "" {
+			overallOutput = append(overallOutput, line)
+		} else if test, ok := testResults[key]; ok {
+			test.Output = append(test.Output, line)
 		}
 	}
 

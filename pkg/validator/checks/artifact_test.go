@@ -67,7 +67,7 @@ func TestDecodeArtifact_InvalidInput(t *testing.T) {
 	}{
 		{"invalid base64", "not-valid-base64!!!", "failed to decode artifact base64"},
 		{"valid base64 invalid json", "aGVsbG8=", "failed to unmarshal artifact JSON"},
-		{"empty string", "", "failed to unmarshal artifact JSON"},
+		{"empty string", "", "empty artifact payload"},
 	}
 
 	for _, tt := range tests {

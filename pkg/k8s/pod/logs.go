@@ -20,6 +20,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/NVIDIA/aicr/pkg/defaults"
 	"github.com/NVIDIA/aicr/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
@@ -42,6 +43,7 @@ func StreamLogs(ctx context.Context, client kubernetes.Interface, namespace, pod
 	defer stream.Close()
 
 	scanner := bufio.NewScanner(stream)
+	scanner.Buffer(make([]byte, defaults.LogScannerBufferSize), defaults.LogScannerBufferSize)
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
@@ -78,6 +80,7 @@ func GetPodLogs(ctx context.Context, client kubernetes.Interface, namespace, pod
 
 	var logBuffer bytes.Buffer
 	scanner := bufio.NewScanner(stream)
+	scanner.Buffer(make([]byte, defaults.LogScannerBufferSize), defaults.LogScannerBufferSize)
 	for scanner.Scan() {
 		logBuffer.WriteString(scanner.Text())
 		logBuffer.WriteByte('\n')

@@ -306,6 +306,14 @@ const (
 	ServerMaxHeaderBytes = 1 << 16
 )
 
+// Log scanner buffer sizes.
+const (
+	// LogScannerBufferSize is the maximum line size for reading pod logs.
+	// Larger than the default 64KB to handle container runtime line splitting
+	// and long go test -json output events.
+	LogScannerBufferSize = 1 << 20 // 1MB
+)
+
 // Attestation file size limits.
 const (
 	// MaxSigstoreBundleSize is the maximum size in bytes for a .sigstore.json file.

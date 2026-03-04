@@ -514,6 +514,146 @@ func TestParseGoTestJSON_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestParseGoTestJSON_PartialOutputReassembly(t *testing.T) {
+	tests := []struct {
+		name       string
+		jsonOutput string
+		wantOutput []string
+	}{
+		{
+			name: "split across two events",
+			jsonOutput: `{"Action":"run","Test":"TestArtifact"}
+{"Action":"output","Test":"TestArtifact","Output":"ARTIFACT:AAAA"}
+{"Action":"output","Test":"TestArtifact","Output":"BBBB\n"}
+{"Action":"pass","Test":"TestArtifact","Elapsed":0.1}`,
+			wantOutput: []string{"ARTIFACT:AAAABBBB"},
+		},
+		{
+			name: "split across three events",
+			jsonOutput: `{"Action":"run","Test":"TestArtifact"}
+{"Action":"output","Test":"TestArtifact","Output":"part1"}
+{"Action":"output","Test":"TestArtifact","Output":"part2"}
+{"Action":"output","Test":"TestArtifact","Output":"part3\n"}
+{"Action":"pass","Test":"TestArtifact","Elapsed":0.1}`,
+			wantOutput: []string{"part1part2part3"},
+		},
+		{
+			name: "complete line not split",
+			jsonOutput: `{"Action":"run","Test":"TestComplete"}
+{"Action":"output","Test":"TestComplete","Output":"complete line\n"}
+{"Action":"pass","Test":"TestComplete","Elapsed":0.1}`,
+			wantOutput: []string{"complete line"},
+		},
+		{
+			name: "mixed complete and partial",
+			jsonOutput: `{"Action":"run","Test":"TestMixed"}
+{"Action":"output","Test":"TestMixed","Output":"line1\n"}
+{"Action":"output","Test":"TestMixed","Output":"partial"}
+{"Action":"output","Test":"TestMixed","Output":"-complete\n"}
+{"Action":"output","Test":"TestMixed","Output":"line3\n"}
+{"Action":"pass","Test":"TestMixed","Elapsed":0.1}`,
+			wantOutput: []string{"line1", "partial-complete", "line3"},
+		},
+		{
+			name: "trailing partial flushed",
+			jsonOutput: `{"Action":"run","Test":"TestTrailing"}
+{"Action":"output","Test":"TestTrailing","Output":"no-newline"}
+{"Action":"pass","Test":"TestTrailing","Elapsed":0.1}`,
+			wantOutput: []string{"no-newline"},
+		},
+		{
+			name: "package-level partial reassembly",
+			jsonOutput: `{"Action":"output","Output":"pkg-"}
+{"Action":"output","Output":"level\n"}
+{"Action":"pass"}`,
+			wantOutput: nil, // package-level output goes to overallOutput, not test output
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseGoTestJSON(tt.jsonOutput)
+			if err != nil {
+				t.Fatalf("parseGoTestJSON() error = %v", err)
+			}
+
+			if tt.wantOutput == nil {
+				// For package-level test, verify package output was reassembled
+				if tt.name == "package-level partial reassembly" {
+					output, ok := result.Details["output"]
+					if !ok {
+						t.Fatal("expected package-level output in Details")
+					}
+					outputSlice, ok := output.([]string)
+					if !ok {
+						t.Fatalf("expected []string, got %T", output)
+					}
+					if len(outputSlice) != 1 || outputSlice[0] != "pkg-level" {
+						t.Errorf("package output = %v, want [pkg-level]", outputSlice)
+					}
+				}
+				return
+			}
+
+			if len(result.Tests) == 0 {
+				t.Fatal("expected test results")
+			}
+
+			test := result.Tests[0]
+			if len(test.Output) != len(tt.wantOutput) {
+				t.Fatalf("output lines = %d, want %d; got %v", len(test.Output), len(tt.wantOutput), test.Output)
+			}
+			for i, want := range tt.wantOutput {
+				if test.Output[i] != want {
+					t.Errorf("output[%d] = %q, want %q", i, test.Output[i], want)
+				}
+			}
+		})
+	}
+}
+
+func TestParseGoTestJSON_PartialOutputPerTest(t *testing.T) {
+	// Two tests with interleaved partial output — each should be reassembled independently.
+	jsonOutput := `{"Action":"run","Test":"TestA"}
+{"Action":"run","Test":"TestB"}
+{"Action":"output","Test":"TestA","Output":"a-part1"}
+{"Action":"output","Test":"TestB","Output":"b-part1"}
+{"Action":"output","Test":"TestA","Output":"a-part2\n"}
+{"Action":"output","Test":"TestB","Output":"b-part2\n"}
+{"Action":"pass","Test":"TestA","Elapsed":0.1}
+{"Action":"pass","Test":"TestB","Elapsed":0.1}`
+
+	result, err := parseGoTestJSON(jsonOutput)
+	if err != nil {
+		t.Fatalf("parseGoTestJSON() error = %v", err)
+	}
+
+	if len(result.Tests) != 2 {
+		t.Fatalf("expected 2 tests, got %d", len(result.Tests))
+	}
+
+	testMap := make(map[string]*TestResult)
+	for i := range result.Tests {
+		testMap[result.Tests[i].Name] = &result.Tests[i]
+	}
+
+	testA := testMap["TestA"]
+	if testA == nil {
+		t.Fatal("TestA not found")
+	}
+	if len(testA.Output) != 1 || testA.Output[0] != "a-part1a-part2" {
+		t.Errorf("TestA output = %v, want [a-part1a-part2]", testA.Output)
+	}
+
+	testB := testMap["TestB"]
+	if testB == nil {
+		t.Fatal("TestB not found")
+	}
+	if len(testB.Output) != 1 || testB.Output[0] != "b-part1b-part2" {
+		t.Errorf("TestB output = %v, want [b-part1b-part2]", testB.Output)
+	}
+}
+
 func TestParseGoTestJSON_EmptyOutput(t *testing.T) {
 	result, err := parseGoTestJSON("")
 	if err != nil {

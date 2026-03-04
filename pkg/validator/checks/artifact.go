@@ -47,6 +47,10 @@ func (a Artifact) Encode() (string, error) {
 
 // DecodeArtifact decodes a base64-encoded JSON artifact string.
 func DecodeArtifact(encoded string) (*Artifact, error) {
+	if encoded == "" {
+		return nil, errors.New(errors.ErrCodeInternal, "empty artifact payload")
+	}
+
 	jsonBytes, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to decode artifact base64", err)
