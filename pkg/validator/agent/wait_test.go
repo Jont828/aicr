@@ -668,6 +668,8 @@ func TestParseGoTestJSON_EmptyOutput(t *testing.T) {
 }
 
 func TestWaitForJobPodTermination_NoPod(t *testing.T) {
+	t.Helper()
+
 	deployer, _ := createDeployer()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()

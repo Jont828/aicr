@@ -186,10 +186,9 @@ func (v *Validator) runPhaseJob(
 			// Wait for pod to fully terminate before returning.
 			// Prevents deferred CleanupRBAC from racing with in-progress pod
 			// operations (e.g., chainsaw namespace cleanup needs ClusterRole).
-			//nolint:contextcheck // Fresh context: parent may have timed out
 			termCtx, termCancel := context.WithTimeout(context.Background(), defaults.K8sPodTerminationWaitTimeout)
 			defer termCancel()
-			deployer.WaitForJobPodTermination(termCtx)
+			deployer.WaitForJobPodTermination(termCtx) //nolint:contextcheck // Fresh context: parent may have timed out
 		} else {
 			slog.Info("cleanup disabled, keeping failed Job for debugging", "job", config.JobName)
 		}
