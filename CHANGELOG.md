@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.16] - 2026-03-05
+
+### Bug Fixes
+
+- *(evidence)* Use nvcr image in HPA GPU test manifest  by [@yuanchen8911](https://github.com/yuanchen8911)
+
 ## [0.8.15] - 2026-03-05
 
 ### Bug Fixes
