@@ -68,6 +68,7 @@ aicr validate \
     --recipe recipe.yaml \
     --toleration dedicated=worker-workload:NoSchedule \
     --toleration dedicated=worker-workload:NoExecute \
+    --phase all \
     --output report.json
 ```
 
