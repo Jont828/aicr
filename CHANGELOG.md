@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.12] - 2026-03-12
+
+### Bug Fixes
+
+- Brew formula follows Homebrew best practices  by [@mchmarny](https://github.com/mchmarny)
+- Upgrade esbuild to 0.25.x to resolve GHSA-67mh-4wv8-2f99  by [@mchmarny](https://github.com/mchmarny)
+
 ## [0.10.11] - 2026-03-12
 
 ### Bug Fixes
