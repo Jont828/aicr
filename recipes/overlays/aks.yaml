@@ -35,6 +35,12 @@ spec:
     # No aws-ebs-csi-driver equivalent needed.
     # Azure Disk CSI is a built-in AKS addon (enabled by default since AKS 1.21).
 
+    # AKS-specific GPU Operator overrides
+    # AKS pre-installs NVIDIA container toolkit; disable toolkit installation
+    - name: gpu-operator
+      type: Helm
+      valuesFile: components/gpu-operator/values-aks.yaml
+
     # NVIDIA Network Operator with SR-IOV Device Plugin for InfiniBand RDMA.
     # AKS ND-series VMs have InfiniBand hardware, but the Network Operator is
     # required to expose NICs as rdma/ib Kubernetes resources via SR-IOV Device Plugin.

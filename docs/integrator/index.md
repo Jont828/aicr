@@ -19,6 +19,7 @@ This section is for integrators who:
 | [Data Flow](data-flow.md) | Understanding snapshots, recipes, validation, and bundles data transformations |
 | [Kubernetes Deployment](kubernetes-deployment.md) | Self-hosted API server deployment with Kubernetes manifests |
 | [EKS Dynamo Networking](eks-dynamo-networking.md) | Security group prerequisites for Dynamo overlays on EKS |
+| [AKS GPU Setup](aks-gpu-setup.md) | GPU driver prerequisites for AKS nodepools |
 | [Recipe Development](recipe-development.md) | Creating and modifying recipe metadata for custom environments |
 | [Validator Extension](validator-extension.md) | Adding custom validators and overriding embedded ones via `--data` |
 

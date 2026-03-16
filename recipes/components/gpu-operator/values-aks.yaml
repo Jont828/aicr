@@ -13,18 +13,16 @@
 # limitations under the License.
 
 # GPU Operator Helm values
-# AKS Training configuration overrides
-
-cdi:
-  enabled: true
-  default: false
+# AKS base configuration overrides
+#
+# AKS pre-installs NVIDIA container toolkit on GPU VMs.
+# Disable toolkit installation to avoid conflicts.
+#
+# By default, GPU Operator manages the NVIDIA driver. Create nodepools
+# with `--gpu-driver none` to prevent AKS from also installing drivers.
+# To use the AKS-managed driver instead, set driver.enabled to false.
+# See https://learn.microsoft.com/en-us/azure/aks/nvidia-gpu-operator
 
 # AKS pre-installs NVIDIA container toolkit
 toolkit:
   enabled: false
-
-validator:
-  plugin:
-    env:
-      - name: WITH_WORKLOAD
-        value: "false"
