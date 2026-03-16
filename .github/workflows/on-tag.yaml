@@ -71,13 +71,13 @@ jobs:
         uses: ./.github/actions/load-versions
 
       - name: Setup Go
-        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5  # v6.2.0
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417  # v6.3.0
         with:
           go-version: ${{ steps.versions.outputs.go }}
           cache: true
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad  # v4.0.0
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22  # v4.1.0
 
       - name: Generate SLSA predicate
         uses: ./.github/actions/generate-slsa-predicate
@@ -89,6 +89,7 @@ jobs:
         uses: ./.github/actions/go-build-release
         with:
           ko_version: ${{ steps.versions.outputs.ko }}
+          homebrew_deploy_key: ${{ secrets.HOMEBREW_DEPLOY_KEY }}
 
       - name: Malware Scan Release Binaries
         if: steps.release.outcome == 'success'
@@ -128,13 +129,13 @@ jobs:
           persist-credentials: false
 
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2  # v3.10.0
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
 
       - name: Authenticate to registry
         uses: ./.github/actions/ghcr-login
 
       - name: Build and push
-        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4  # v6.15.0
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294  # v7.0.0
         with:
           context: .
           file: validators/${{ matrix.phase }}/Dockerfile
@@ -227,7 +228,7 @@ jobs:
 
       - name: Scan container image
         id: trivy
-        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518  # v0.34.1
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
         with:
           scan-type: 'image'
           image-ref: '${{ matrix.image }}:${{ github.ref_name }}'
@@ -241,7 +242,7 @@ jobs:
 
       - name: Upload SARIF to GitHub Security
         if: hashFiles('image-scan-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@b20883b0cd1f46c72ae0ba6d1090936928f9fa30  # v4.32.0
+        uses: github/codeql-action/upload-sarif@0d579ffd059c29b07949a3cce3983f0780820c98  # v4.32.6
         with:
           sarif_file: image-scan-results.sarif
           category: 'trivy-image-${{ matrix.image }}'
@@ -411,13 +412,39 @@ jobs:
             --ref main
 
   # =============================================================================
+  # Notify: Post release announcement to Slack
+  # =============================================================================
+
+  notify:
+    name: Slack Notification
+    runs-on: ubuntu-latest
+    needs: [publish]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Post to Slack
+        env:
+          SLACK_SERVICE: ${{ secrets.SLACK_SERVICE }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          SERVER: ${{ github.server_url }}
+        run: |
+          set -euo pipefail
+          RELEASE_URL="${SERVER}/${REPO}/releases/tag/${TAG}"
+          curl -sSf -X POST \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\"AICR ${TAG} has been released: ${RELEASE_URL}\"}" \
+            "https://hooks.slack.com/services/${SLACK_SERVICE}"
+
+  # =============================================================================
   # Summary: Release pipeline report (always runs, even on failure)
   # =============================================================================
 
   summary:
     name: Release Summary
     runs-on: ubuntu-latest
-    needs: [tests, build-ko, build-docker, docker-manifest, image-vuln-scan, attest, release-check, deploy, publish, site]
+    needs: [tests, build-ko, build-docker, docker-manifest, image-vuln-scan, attest, release-check, deploy, publish, site, notify]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -435,6 +462,7 @@ jobs:
           DEPLOY: ${{ needs.deploy.result }}
           PUBLISH: ${{ needs.publish.result }}
           SITE: ${{ needs.site.result }}
+          NOTIFY: ${{ needs.notify.result }}
           TAG: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
         run: |
@@ -456,4 +484,5 @@ jobs:
             echo "| Deploy | ${DEPLOY} |"
             echo "| Publish | ${PUBLISH} |"
             echo "| Site | ${SITE} |"
+            echo "| Slack Notification | ${NOTIFY} |"
           } >> "$GITHUB_STEP_SUMMARY"

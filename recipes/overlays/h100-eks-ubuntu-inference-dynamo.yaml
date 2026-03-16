@@ -59,6 +59,7 @@ spec:
         - dynamo-crds
         - cert-manager
         - kube-prometheus-stack
+        - gpu-operator
         - kai-scheduler
       overrides:
         etcd:
@@ -76,7 +77,6 @@ spec:
       checks:
         - operator-health
         - expected-resources
-        - helm-values
         - gpu-operator-version
         - check-nvidia-smi
       constraints:

@@ -2,7 +2,7 @@
 
 This guide describes how to install the AI Cluster Runtime (AICR) CLI tool (`aicr`) on Linux, macOS, or Windows.
 
-**What is AICR**: AICR generates validated configurations for GPU-accelerated Kubernetes deployments. See [README](../../README.md) for project overview.
+**What is AICR**: AICR generates validated configurations for GPU-accelerated Kubernetes deployments. See [README](https://github.com/NVIDIA/aicr#readme) for project overview.
 
 ## Prerequisites
 
@@ -13,25 +13,28 @@ This guide describes how to install the AI Cluster Runtime (AICR) CLI tool (`aic
 
 ## Install aicr CLI
 
-### Option 1: Automated Installation (Recommended)
+### Option 1: Homebrew (macOS/Linux)
+
+```shell
+brew tap NVIDIA/aicr
+brew install aicr
+```
+
+### Option 2: Automated Installation
 
 Install the latest version using the installation script:
 
-> Note: Temporally, while the repo is private, make sure to include your GitHub token first:
-
 ```shell
-curl -sfL -H "Authorization: token $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/NVIDIA/aicr/main/install | bash -s --
+curl -sfL https://raw.githubusercontent.com/NVIDIA/aicr/main/install | bash -s --
 ```
 
 To install to a custom directory instead of the default `/usr/local/bin`:
 
 ```shell
-curl -sfL -H "Authorization: token $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/NVIDIA/aicr/main/install | bash -s -- -d ~/bin
+curl -sfL https://raw.githubusercontent.com/NVIDIA/aicr/main/install | bash -s -- -d ~/bin
 ```
 
-You can generate a personal access token at [GitHub Settings > Developer settings > Personal access tokens](https://github.com/settings/tokens). The token needs `repo` scope for private repository access.
+Optional: if you hit GitHub API rate limits, set `GITHUB_TOKEN` before running the install command. No special repository scope is required for public releases.
 
 This script:
 - Detects your OS and architecture automatically
@@ -40,9 +43,9 @@ This script:
 - Verifies the installation
 - Uses `GITHUB_TOKEN` environment variable for authenticated API calls (avoids rate limits)
 
-> **Supply Chain Security**: AICR includes SLSA Build Level 3 compliance with signed SBOMs and verifiable attestations. See [SECURITY](../SECURITY.md#supply-chain-security) for verification instructions.
+> **Supply Chain Security**: AICR includes SLSA Build Level 3 compliance with signed SBOMs and verifiable attestations. See [SECURITY](https://github.com/NVIDIA/aicr/blob/main/SECURITY.md#supply-chain-security) for verification instructions.
 
-### Option 2: Manual Installation
+### Option 3: Manual Installation
 
 1. **Download the latest release**
 
@@ -68,10 +71,10 @@ sudo chmod +x /usr/local/bin/aicr
 aicr --version
 ```
 
-### Option 3: Build from Source
+### Option 4: Build from Source
 
 **Requirements:**
-- Go 1.25 or higher
+- Go 1.26 or higher
 
 ```shell
 go install github.com/NVIDIA/aicr/cmd/aicr@latest
@@ -183,6 +186,6 @@ sudo rm /usr/local/bin/aicr
 
 ## Getting Help
 
-- **Documentation**: [User Documentation](README.md)
+- **Documentation**: [User Documentation](index.md)
 - **Issues**: [GitHub Issues](https://github.com/NVIDIA/aicr/issues)
 - **API Server**: See [Kubernetes Deployment](../integrator/kubernetes-deployment.md)

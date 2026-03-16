@@ -5,8 +5,12 @@
 Download the latest binary and verify version:
 
 ```shell
-curl -sfL -H "Authorization: token $GITHUB_TOKEN" \
-    https://raw.githubusercontent.com/NVIDIA/aicr/main/install | bash -s --
+# Homebrew (macOS/Linux)
+brew tap NVIDIA/aicr
+brew install aicr
+
+# Or use the install script
+curl -sfL https://raw.githubusercontent.com/NVIDIA/aicr/main/install | bash -s --
 ```
 
 ## Snapshot (prior to deploy)

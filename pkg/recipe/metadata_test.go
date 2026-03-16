@@ -27,7 +27,7 @@
 //
 // Related test files:
 // - recipe_test.go: Tests Recipe struct validation methods after recipes
-//   are built (Validate, ValidateStructure, ValidateMeasurementExists)
+//   are built (Validate, ValidateStructure, validateMeasurementExists)
 // - yaml_test.go: Tests embedded YAML data files for schema conformance,
 //   valid references, enum values, and constraint syntax
 
@@ -281,6 +281,48 @@ func TestRecipeMetadataSpecMerge(t *testing.T) {
 			}
 			if tt.wantConCnt > 0 && len(tt.base.Constraints) != tt.wantConCnt {
 				t.Errorf("Merge() constraints count = %d, want %d", len(tt.base.Constraints), tt.wantConCnt)
+			}
+		})
+	}
+}
+
+func TestComponentRefIsEnabled(t *testing.T) {
+	tests := []struct {
+		name     string
+		ref      ComponentRef
+		expected bool
+	}{
+		{
+			name:     "no overrides",
+			ref:      ComponentRef{Name: "gpu-operator"},
+			expected: true,
+		},
+		{
+			name:     "enabled true",
+			ref:      ComponentRef{Name: "gpu-operator", Overrides: map[string]any{"enabled": true}},
+			expected: true,
+		},
+		{
+			name:     "enabled false",
+			ref:      ComponentRef{Name: "aws-ebs-csi-driver", Overrides: map[string]any{"enabled": false}},
+			expected: false,
+		},
+		{
+			name:     "enabled string false is not recognized",
+			ref:      ComponentRef{Name: "test", Overrides: map[string]any{"enabled": "false"}},
+			expected: true,
+		},
+		{
+			name:     "other overrides no enabled key",
+			ref:      ComponentRef{Name: "test", Overrides: map[string]any{"replicas": 3}},
+			expected: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.ref.IsEnabled()
+			if got != tt.expected {
+				t.Errorf("IsEnabled() = %v, want %v", got, tt.expected)
 			}
 		})
 	}

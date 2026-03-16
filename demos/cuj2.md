@@ -20,7 +20,7 @@ aicr recipe \
 
 ```shell
 aicr validate \
-  --phase readiness \
+  --phase performance \
   --recipe recipe.yaml
 ```
 
@@ -51,23 +51,12 @@ cd ./bundle && chmod +x deploy.sh && ./deploy.sh
 aicr validate \
   --recipe recipe.yaml \
   --output report.yaml \
-  --phase readiness \
+  --phase performance \
   --phase deployment \
   --phase conformance
 ```
 
 ## Run Inference Workload
-
-### Create namespace and HuggingFace secret
-
-> Set HF_TOKEN env var first
-
-```shell
-kubectl create ns dynamo-workload
-
-sed "s/<your-hf-token>/$HF_TOKEN/" \
-  demos/workloads/inference/hf-token-secret.yaml | kubectl apply -f -
-```
 
 ### Deploy the DynamoGraphDeployment
 
@@ -79,7 +68,7 @@ Monitor deployment, until all pods are `Running` and ready:
 
 ```shell
 kubectl get dynamographdeployments -n dynamo-workload
-kubectl get pods -n dynamo-workload -w
+kubectl wait --for=condition=ready pod --all -n dynamo-workload --timeout=300s
 ```
 
 ### Test the endpoint
