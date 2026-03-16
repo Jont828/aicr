@@ -23,9 +23,12 @@ cdi:
   enabled: true
   default: false
 
-# AKS pre-installs NVIDIA drivers on GPU VMs
-driver:
-  enabled: false
+# It's recommended to use the pre-installed AKS GPU driver and instead use the one provided by the GPU Operator. The nodepool should be created with `--gpu-driver none` to prevent conflicts between the host driver and the GPU Operator driver.
+# If you do want to use the AKS driver, uncomment this, set driver.enabled to false.
+# See https://learn.microsoft.com/en-us/azure/aks/nvidia-gpu-operator for more details on GPU Operator configuration on AKS.
+#
+# driver:
+#   enabled: false
 
 # AKS pre-installs NVIDIA container toolkit
 toolkit:

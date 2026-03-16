@@ -35,9 +35,17 @@ spec:
     # No aws-ebs-csi-driver equivalent needed.
     # Azure Disk CSI is a built-in AKS addon (enabled by default since AKS 1.21).
 
-    # No aws-efa equivalent needed.
-    # AKS ND-series VMs have native InfiniBand (400 Gb/s NVIDIA Quantum-2 CX7).
-    # Devices appear as mlx5_* interfaces, auto-configured within the VMSS.
+    # NVIDIA Network Operator with SR-IOV Device Plugin for InfiniBand RDMA.
+    # AKS ND-series VMs have InfiniBand hardware, but the Network Operator is
+    # required to expose NICs as rdma/ib Kubernetes resources via SR-IOV Device Plugin.
+    # Reference: https://azure.github.io/aks-rdma-infiniband/configurations/network-operator
+    - name: network-operator
+      type: Helm
+      source: https://helm.ngc.nvidia.com/nvidia
+      version: "25.1.0"
+      valuesFile: components/network-operator/values.yaml
+      dependencyRefs:
+        - cert-manager
 
     # Prometheus persistent storage — Azure Disk Standard SSD
     - name: kube-prometheus-stack
@@ -68,6 +76,7 @@ spec:
       checks:
         - platform-health
         - gpu-operator-health
+        - network-operator-health
         - dra-support
         - accelerator-metrics
         - ai-service-metrics

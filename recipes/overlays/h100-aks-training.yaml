@@ -40,8 +40,6 @@ spec:
         - cert-manager
         - kube-prometheus-stack
       overrides:
-        cdi:
-          enabled: true
         gdrcopy:
           enabled: true
 
