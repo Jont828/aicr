@@ -148,5 +148,5 @@ jobs:
       - name: Security Scan
         uses: ./.github/actions/security-scan
         with:
-          severity: 'MEDIUM'
-          category: 'trivy-fs'
+          severity-cutoff: 'medium'
+          category: 'anchore-fs'
