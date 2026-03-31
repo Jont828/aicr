@@ -12,12 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Dynamo vLLM inference workload for ai_service_metrics evidence collection.
+# Deploys a DynamoGraphDeployment with vLLM backend (Qwen/Qwen3-0.6B).
+# Uses DRA ResourceClaim for GPU allocation (required on DRA-only clusters).
+#
 # Prerequisites:
 #   - KAI Scheduler installed (provides default-parent-queue)
 #   - Dynamo platform deployed (dynamo-crds + dynamo-platform)
+#   - DRA driver installed (gpu.nvidia.com DeviceClass)
+#
+# Usage:
+#   kubectl apply -f dynamo-vllm-agg.yaml
+#
+# Cleanup:
+#   kubectl delete ns dynamo-workload
 
 ---
-# KAI Scheduler queue for Dynamo workloads
 apiVersion: scheduling.run.ai/v2
 kind: Queue
 metadata:
