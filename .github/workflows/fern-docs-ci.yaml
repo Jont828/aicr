@@ -22,7 +22,7 @@ on:
       - 'docs/**'
       - 'fern/**'
       - '.github/workflows/fern-docs-ci.yaml'
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: read
