@@ -15,16 +15,24 @@
 package recipe
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
+
+	aicrerrors "github.com/NVIDIA/aicr/pkg/errors"
+	"gopkg.in/yaml.v3"
 )
 
 const (
-	testRecipeBase        = "base"
-	testOverlayEKS        = "eks"
-	testOverlayEKSTraning = "eks-training"
+	testRecipeBase         = "base"
+	testOverlayEKS         = "eks"
+	testK8sVersionConstant = "K8s.server.version"
+	testOverlayEKSTraning  = "eks-training"
+	testOverlaySharedTrain = "shared-training"
 )
 
 func TestMetadataStore_GetValuesFile(t *testing.T) {
@@ -638,19 +646,22 @@ func TestEvaluatorFailingLeafExcludesCandidate(t *testing.T) {
 		t.Fatal("expected at least one excluded overlay")
 	}
 
-	excluded := make(map[string]bool)
-	for _, name := range result.Metadata.ExcludedOverlays {
-		excluded[name] = true
+	excluded := make(map[string]ExcludedOverlayReason)
+	for _, overlay := range result.Metadata.ExcludedOverlays {
+		excluded[overlay.Name] = overlay.Reason
 	}
 
 	// The leaf should be excluded
-	if !excluded["h100-eks-ubuntu-training"] {
+	if _, ok := excluded["h100-eks-ubuntu-training"]; !ok {
 		t.Errorf("expected h100-eks-ubuntu-training in ExcludedOverlays, got %v", result.Metadata.ExcludedOverlays)
+	}
+	if excluded["h100-eks-ubuntu-training"] != ExcludedOverlayReasonConstraintFailed {
+		t.Errorf("expected constraint-failed reason, got %q", excluded["h100-eks-ubuntu-training"])
 	}
 
 	// Ancestors should NOT appear in ExcludedOverlays (they were never candidates)
 	for _, ancestor := range []string{"eks", testOverlayEKSTraning, "h100-eks-training"} {
-		if excluded[ancestor] {
+		if _, ok := excluded[ancestor]; ok {
 			t.Errorf("ancestor %q should not appear in ExcludedOverlays (not a candidate)", ancestor)
 		}
 	}
@@ -674,5 +685,621 @@ func TestEvaluatorFailingLeafExcludesCandidate(t *testing.T) {
 	}
 	if !applied["monitoring-hpa"] {
 		t.Error("monitoring-hpa should remain applied (independent non-ancestor leaf)")
+	}
+}
+
+// TestMixinConstraintFailureExcludesCandidate verifies that when a mixin-contributed
+// constraint fails evaluation (e.g., os-ubuntu kernel constraint against a snapshot
+// with kernel < 6.8), the composed candidate is excluded and the result falls back
+// to base-only output. This tests the post-compose evaluation path in
+// evaluateMixinConstraints.
+func TestMixinConstraintFailureExcludesCandidate(t *testing.T) {
+	ctx := context.Background()
+	store, err := loadMetadataStore(ctx)
+	if err != nil {
+		t.Fatalf("failed to load metadata store: %v", err)
+	}
+
+	// Query that resolves to a leaf using the os-ubuntu mixin
+	criteria := &Criteria{
+		Service:     CriteriaServiceEKS,
+		Accelerator: CriteriaAcceleratorH100,
+		Intent:      CriteriaIntentTraining,
+		OS:          CriteriaOSUbuntu,
+	}
+
+	// Evaluator that passes K8s constraint but fails OS/kernel constraints
+	// (simulates a snapshot where OS matches but kernel is too old)
+	selectiveEvaluator := func(c Constraint) ConstraintEvalResult {
+		if c.Name == testK8sVersionConstant {
+			return ConstraintEvalResult{Passed: true, Actual: "v1.35.0"}
+		}
+		// Fail OS-related constraints (these come from the os-ubuntu mixin)
+		if c.Name == "OS.sysctl./proc/sys/kernel/osrelease" {
+			return ConstraintEvalResult{Passed: false, Actual: "5.15.0"}
+		}
+		// Pass everything else
+		return ConstraintEvalResult{Passed: true, Actual: "ok"}
+	}
+
+	result, err := store.BuildRecipeResultWithEvaluator(ctx, criteria, selectiveEvaluator)
+	if err != nil {
+		t.Fatalf("BuildRecipeResultWithEvaluator failed: %v", err)
+	}
+
+	// The mixin constraint (kernel >= 6.8) should have failed post-compose,
+	// causing a fallback to base-only output
+	if len(result.Metadata.ExcludedOverlays) == 0 {
+		t.Fatal("expected excluded overlays from mixin constraint failure")
+	}
+	excluded := make(map[string]ExcludedOverlayReason)
+	for _, overlay := range result.Metadata.ExcludedOverlays {
+		excluded[overlay.Name] = overlay.Reason
+	}
+	if excluded["h100-eks-ubuntu-training"] != ExcludedOverlayReasonMixinConstraintFailed {
+		t.Fatalf("expected mixin-constraint-failed reason, got %q", excluded["h100-eks-ubuntu-training"])
+	}
+
+	// Applied overlays should be base-only (plus monitoring-hpa which has no
+	// mixin constraints and passes evaluation independently)
+	applied := make(map[string]bool)
+	for _, name := range result.Metadata.AppliedOverlays {
+		applied[name] = true
+	}
+	if !applied[baseRecipeName] {
+		t.Error("base should always be applied")
+	}
+
+	// The EKS chain overlays should NOT be in applied (they were part of the
+	// composed candidate that failed post-compose evaluation)
+	for _, name := range []string{"h100-eks-ubuntu-training", "h100-eks-training", "eks-training", "eks"} {
+		if applied[name] {
+			t.Errorf("%q should not be applied after mixin constraint failure", name)
+		}
+	}
+
+	// Constraint warnings should include the failing mixin constraint
+	foundKernelWarning := false
+	for _, w := range result.Metadata.ConstraintWarnings {
+		if w.Constraint == "OS.sysctl./proc/sys/kernel/osrelease" {
+			foundKernelWarning = true
+		}
+	}
+	if !foundKernelWarning {
+		t.Error("expected constraint warning for OS.sysctl./proc/sys/kernel/osrelease from mixin")
+	}
+
+	t.Logf("excluded: %v", result.Metadata.ExcludedOverlays)
+	t.Logf("applied: %v", result.Metadata.AppliedOverlays)
+	t.Logf("warnings: %d", len(result.Metadata.ConstraintWarnings))
+}
+
+func TestMixinConstraintFailureExcludesOnlyAffectedCandidateChain(t *testing.T) {
+	ctx := context.Background()
+
+	baseMeta := &RecipeMetadata{}
+	baseMeta.Metadata.Name = testRecipeBase
+
+	sharedTraining := &RecipeMetadata{}
+	sharedTraining.Metadata.Name = testOverlaySharedTrain
+	sharedTraining.Spec.Criteria = &Criteria{
+		Service: CriteriaServiceEKS,
+		Intent:  CriteriaIntentTraining,
+	}
+	sharedTraining.Spec.Mixins = []string{"kernel-gate"}
+
+	failingLeaf := &RecipeMetadata{}
+	failingLeaf.Metadata.Name = "h100-shared-training"
+	failingLeaf.Spec.Base = testOverlaySharedTrain
+	failingLeaf.Spec.Criteria = &Criteria{
+		Service:     CriteriaServiceEKS,
+		Accelerator: CriteriaAcceleratorH100,
+		Intent:      CriteriaIntentTraining,
+	}
+
+	independentLeaf := &RecipeMetadata{}
+	independentLeaf.Metadata.Name = "monitoring"
+	independentLeaf.Spec.Criteria = &Criteria{
+		Service: CriteriaServiceEKS,
+		Intent:  CriteriaIntentTraining,
+	}
+	independentLeaf.Spec.Mixins = []string{"monitoring-gate"}
+	independentLeaf.Spec.ComponentRefs = []ComponentRef{
+		{
+			Name:   "dcgm-exporter",
+			Type:   ComponentTypeHelm,
+			Source: "https://example.com/charts",
+			Chart:  "dcgm-exporter",
+		},
+	}
+
+	store := &MetadataStore{
+		Base: baseMeta,
+		Overlays: map[string]*RecipeMetadata{
+			testOverlaySharedTrain: sharedTraining,
+			"h100-shared-training": failingLeaf,
+			"monitoring":           independentLeaf,
+		},
+		Mixins: map[string]*RecipeMixin{
+			"kernel-gate": {
+				Kind:       RecipeMixinKind,
+				APIVersion: RecipeAPIVersion,
+				Metadata: struct {
+					Name string `json:"name" yaml:"name"`
+				}{
+					Name: "kernel-gate",
+				},
+				Spec: struct {
+					Constraints   []Constraint   `json:"constraints,omitempty" yaml:"constraints,omitempty"`
+					ComponentRefs []ComponentRef `json:"componentRefs,omitempty" yaml:"componentRefs,omitempty"`
+				}{
+					Constraints: []Constraint{
+						{Name: "OS.kernel", Value: ">= 6.8"},
+					},
+				},
+			},
+			"monitoring-gate": {
+				Kind:       RecipeMixinKind,
+				APIVersion: RecipeAPIVersion,
+				Metadata: struct {
+					Name string `json:"name" yaml:"name"`
+				}{
+					Name: "monitoring-gate",
+				},
+				Spec: struct {
+					Constraints   []Constraint   `json:"constraints,omitempty" yaml:"constraints,omitempty"`
+					ComponentRefs []ComponentRef `json:"componentRefs,omitempty" yaml:"componentRefs,omitempty"`
+				}{
+					Constraints: []Constraint{
+						{Name: "Monitoring.enabled", Value: "true"},
+					},
+					ComponentRefs: []ComponentRef{
+						{
+							Name:   "nvidia-dcgm-exporter",
+							Type:   ComponentTypeHelm,
+							Source: "https://example.com/charts",
+							Chart:  "nvidia-dcgm-exporter",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	criteria := &Criteria{
+		Service:     CriteriaServiceEKS,
+		Accelerator: CriteriaAcceleratorH100,
+		Intent:      CriteriaIntentTraining,
+	}
+
+	evaluator := func(c Constraint) ConstraintEvalResult {
+		switch c.Name {
+		case "OS.kernel":
+			return ConstraintEvalResult{Passed: false, Actual: "5.15"}
+		case "Monitoring.enabled":
+			return ConstraintEvalResult{Passed: true, Actual: "true"}
+		default:
+			return ConstraintEvalResult{Passed: true, Actual: "ok"}
+		}
+	}
+
+	result, err := store.BuildRecipeResultWithEvaluator(ctx, criteria, evaluator)
+	if err != nil {
+		t.Fatalf("BuildRecipeResultWithEvaluator failed: %v", err)
+	}
+
+	excluded := make(map[string]ExcludedOverlayReason)
+	for _, overlay := range result.Metadata.ExcludedOverlays {
+		excluded[overlay.Name] = overlay.Reason
+	}
+	if _, ok := excluded["h100-shared-training"]; !ok {
+		t.Fatalf("expected failed leaf in ExcludedOverlays, got %v", result.Metadata.ExcludedOverlays)
+	}
+	if excluded["h100-shared-training"] != ExcludedOverlayReasonMixinConstraintFailed {
+		t.Fatalf("failed leaf reason = %q, want %q",
+			excluded["h100-shared-training"], ExcludedOverlayReasonMixinConstraintFailed)
+	}
+	if _, ok := excluded[testOverlaySharedTrain]; ok {
+		t.Fatalf("ancestor should not appear in ExcludedOverlays, got %v", result.Metadata.ExcludedOverlays)
+	}
+	if _, ok := excluded["monitoring"]; ok {
+		t.Fatalf("independent passing leaf should not be excluded, got %v", result.Metadata.ExcludedOverlays)
+	}
+
+	applied := make(map[string]bool)
+	for _, name := range result.Metadata.AppliedOverlays {
+		applied[name] = true
+	}
+	if !applied[baseRecipeName] {
+		t.Fatal("base should always remain applied")
+	}
+	if applied[testOverlaySharedTrain] || applied["h100-shared-training"] {
+		t.Fatalf("failed candidate chain should be removed from applied overlays, got %v", result.Metadata.AppliedOverlays)
+	}
+	if !applied["monitoring"] {
+		t.Fatalf("independent passing leaf should remain applied, got %v", result.Metadata.AppliedOverlays)
+	}
+
+	foundWarning := false
+	for _, warning := range result.Metadata.ConstraintWarnings {
+		if warning.Constraint != "OS.kernel" {
+			continue
+		}
+		foundWarning = true
+		if warning.Overlay != "h100-shared-training" {
+			t.Fatalf("warning overlay = %q, want failed leaf candidate", warning.Overlay)
+		}
+		if warning.Reason != "mixin-constraint-failed: expected >= 6.8, got 5.15" {
+			t.Fatalf("warning reason = %q", warning.Reason)
+		}
+	}
+	if !foundWarning {
+		t.Fatal("expected warning for failed mixin constraint")
+	}
+
+	componentNames := make(map[string]bool)
+	for _, ref := range result.ComponentRefs {
+		componentNames[ref.Name] = true
+	}
+	if !componentNames["nvidia-dcgm-exporter"] {
+		t.Fatalf("surviving mixin component was dropped: %v", result.ComponentRefs)
+	}
+}
+
+func TestMixinConstraintFailurePreservesSharedAncestorsForSurvivingLeaf(t *testing.T) {
+	ctx := context.Background()
+
+	baseMeta := &RecipeMetadata{}
+	baseMeta.Metadata.Name = testRecipeBase
+
+	sharedTraining := &RecipeMetadata{}
+	sharedTraining.Metadata.Name = testOverlaySharedTrain
+	sharedTraining.Spec.Criteria = &Criteria{
+		Service: CriteriaServiceEKS,
+		Intent:  CriteriaIntentTraining,
+	}
+	sharedTraining.Spec.ComponentRefs = []ComponentRef{
+		{
+			Name:   "shared-component",
+			Type:   ComponentTypeHelm,
+			Source: "https://example.com/charts",
+			Chart:  "shared-component",
+		},
+	}
+
+	failingLeaf := &RecipeMetadata{}
+	failingLeaf.Metadata.Name = "leaf-a"
+	failingLeaf.Spec.Base = testOverlaySharedTrain
+	failingLeaf.Spec.Criteria = &Criteria{
+		Service:     CriteriaServiceEKS,
+		Accelerator: CriteriaAcceleratorH100,
+		Intent:      CriteriaIntentTraining,
+	}
+	failingLeaf.Spec.Mixins = []string{"failing-mixin"}
+
+	survivingLeaf := &RecipeMetadata{}
+	survivingLeaf.Metadata.Name = "leaf-b"
+	survivingLeaf.Spec.Base = testOverlaySharedTrain
+	survivingLeaf.Spec.Criteria = &Criteria{
+		Service:     CriteriaServiceEKS,
+		Accelerator: CriteriaAcceleratorAny,
+		Intent:      CriteriaIntentTraining,
+	}
+	survivingLeaf.Spec.Mixins = []string{"passing-mixin"}
+
+	store := &MetadataStore{
+		Base: baseMeta,
+		Overlays: map[string]*RecipeMetadata{
+			testOverlaySharedTrain: sharedTraining,
+			"leaf-a":               failingLeaf,
+			"leaf-b":               survivingLeaf,
+		},
+		Mixins: map[string]*RecipeMixin{
+			"failing-mixin": {
+				Kind:       RecipeMixinKind,
+				APIVersion: RecipeAPIVersion,
+				Metadata: struct {
+					Name string `json:"name" yaml:"name"`
+				}{Name: "failing-mixin"},
+				Spec: struct {
+					Constraints   []Constraint   `json:"constraints,omitempty" yaml:"constraints,omitempty"`
+					ComponentRefs []ComponentRef `json:"componentRefs,omitempty" yaml:"componentRefs,omitempty"`
+				}{
+					Constraints: []Constraint{{Name: "GPU.ready", Value: "true"}},
+				},
+			},
+			"passing-mixin": {
+				Kind:       RecipeMixinKind,
+				APIVersion: RecipeAPIVersion,
+				Metadata: struct {
+					Name string `json:"name" yaml:"name"`
+				}{Name: "passing-mixin"},
+				Spec: struct {
+					Constraints   []Constraint   `json:"constraints,omitempty" yaml:"constraints,omitempty"`
+					ComponentRefs []ComponentRef `json:"componentRefs,omitempty" yaml:"componentRefs,omitempty"`
+				}{
+					Constraints: []Constraint{{Name: "Monitoring.enabled", Value: "true"}},
+					ComponentRefs: []ComponentRef{{
+						Name:   "surviving-component",
+						Type:   ComponentTypeHelm,
+						Source: "https://example.com/charts",
+						Chart:  "surviving-component",
+					}},
+				},
+			},
+		},
+	}
+
+	criteria := &Criteria{
+		Service:     CriteriaServiceEKS,
+		Accelerator: CriteriaAcceleratorH100,
+		Intent:      CriteriaIntentTraining,
+	}
+
+	evaluator := func(c Constraint) ConstraintEvalResult {
+		switch c.Name {
+		case "GPU.ready":
+			return ConstraintEvalResult{Passed: false, Actual: "false"}
+		case "Monitoring.enabled":
+			return ConstraintEvalResult{Passed: true, Actual: "true"}
+		default:
+			return ConstraintEvalResult{Passed: true, Actual: "ok"}
+		}
+	}
+
+	result, err := store.BuildRecipeResultWithEvaluator(ctx, criteria, evaluator)
+	if err != nil {
+		t.Fatalf("BuildRecipeResultWithEvaluator failed: %v", err)
+	}
+
+	applied := make(map[string]bool)
+	for _, name := range result.Metadata.AppliedOverlays {
+		applied[name] = true
+	}
+	if !applied[testOverlaySharedTrain] {
+		t.Fatalf("shared ancestor should remain applied for surviving leaf, got %v", result.Metadata.AppliedOverlays)
+	}
+	if !applied["leaf-b"] {
+		t.Fatalf("surviving leaf should remain applied, got %v", result.Metadata.AppliedOverlays)
+	}
+	if applied["leaf-a"] {
+		t.Fatalf("failed leaf should be excluded, got %v", result.Metadata.AppliedOverlays)
+	}
+
+	componentNames := make(map[string]bool)
+	for _, ref := range result.ComponentRefs {
+		componentNames[ref.Name] = true
+	}
+	if !componentNames["shared-component"] {
+		t.Fatalf("shared ancestor component was lost after fallback rebuild: %v", result.ComponentRefs)
+	}
+	if !componentNames["surviving-component"] {
+		t.Fatalf("surviving leaf mixin component was lost after fallback rebuild: %v", result.ComponentRefs)
+	}
+}
+
+func TestEvaluateMixinConstraintsReturnsErrorWhenConstraintCannotBeMappedToCandidate(t *testing.T) {
+	store := &MetadataStore{
+		Overlays: map[string]*RecipeMetadata{
+			"candidate": {
+				RecipeMetadataHeader: RecipeMetadataHeader{
+					Metadata: struct {
+						Name string `json:"name" yaml:"name"`
+					}{Name: "candidate"},
+				},
+			},
+		},
+	}
+
+	result, err := store.evaluateMixinConstraints(
+		&RecipeMetadataSpec{
+			Constraints: []Constraint{
+				{Name: "OS.kernel", Value: ">= 6.8"},
+			},
+		},
+		func(_ Constraint) ConstraintEvalResult {
+			return ConstraintEvalResult{Passed: false, Actual: "5.15"}
+		},
+		map[string]bool{"OS.kernel": true},
+		[]string{"candidate"},
+	)
+	if err == nil {
+		t.Fatal("expected error when mixin constraint cannot be mapped to any candidate")
+	}
+	if result.Failed {
+		t.Fatal("expected zero-value result when mapping error occurs")
+	}
+	var structuredErr *aicrerrors.StructuredError
+	if !errors.As(err, &structuredErr) {
+		t.Fatalf("expected structured error, got %T", err)
+	}
+	if structuredErr.Code != aicrerrors.ErrCodeInternal {
+		t.Fatalf("expected INTERNAL error code, got %s", structuredErr.Code)
+	}
+}
+
+// TestMalformedMixinRejected verifies that mixin files with forbidden fields
+// (base, criteria, mixins, validation) are rejected at load time by
+// KnownFields(true) strict parsing.
+func TestMalformedMixinRejected(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "mixin with forbidden base field",
+			content: `kind: RecipeMixin
+apiVersion: aicr.nvidia.com/v1alpha1
+metadata:
+  name: bad-mixin
+spec:
+  base: eks
+  constraints:
+    - name: test
+      value: "1.0"
+`,
+		},
+		{
+			name: "mixin with forbidden criteria field",
+			content: `kind: RecipeMixin
+apiVersion: aicr.nvidia.com/v1alpha1
+metadata:
+  name: bad-mixin
+spec:
+  criteria:
+    service: eks
+  constraints:
+    - name: test
+      value: "1.0"
+`,
+		},
+		{
+			name: "mixin with forbidden validation field",
+			content: `kind: RecipeMixin
+apiVersion: aicr.nvidia.com/v1alpha1
+metadata:
+  name: bad-mixin
+spec:
+  validation:
+    deployment:
+      checks:
+        - operator-health
+  constraints:
+    - name: test
+      value: "1.0"
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mixin RecipeMixin
+			decoder := yaml.NewDecoder(bytes.NewReader([]byte(tt.content)))
+			decoder.KnownFields(true)
+			err := decoder.Decode(&mixin)
+			if err == nil {
+				t.Error("expected error for mixin with forbidden fields, got nil")
+			}
+		})
+	}
+}
+
+func TestExcludedOverlayUnmarshalYAML(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []ExcludedOverlay
+		wantErr  bool
+	}{
+		{
+			name:  "legacy string form",
+			input: "- overlay-a\n- overlay-b\n",
+			expected: []ExcludedOverlay{
+				{Name: "overlay-a"},
+				{Name: "overlay-b"},
+			},
+		},
+		{
+			name:  "object form",
+			input: "- name: overlay-a\n  reason: constraint-failed\n- name: overlay-b\n  reason: mixin-constraint-failed\n",
+			expected: []ExcludedOverlay{
+				{Name: "overlay-a", Reason: ExcludedOverlayReasonConstraintFailed},
+				{Name: "overlay-b", Reason: ExcludedOverlayReasonMixinConstraintFailed},
+			},
+		},
+		{
+			name:  "object form without reason",
+			input: "- name: overlay-a\n",
+			expected: []ExcludedOverlay{
+				{Name: "overlay-a"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []ExcludedOverlay
+			err := yaml.Unmarshal([]byte(tt.input), &got)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !reflect.DeepEqual(got, tt.expected) {
+				t.Errorf("got %+v, want %+v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExcludedOverlayUnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []ExcludedOverlay
+		wantErr  bool
+	}{
+		{
+			name:  "legacy string form",
+			input: `["overlay-a","overlay-b"]`,
+			expected: []ExcludedOverlay{
+				{Name: "overlay-a"},
+				{Name: "overlay-b"},
+			},
+		},
+		{
+			name:  "object form",
+			input: `[{"name":"overlay-a","reason":"constraint-failed"},{"name":"overlay-b","reason":"mixin-constraint-failed"}]`,
+			expected: []ExcludedOverlay{
+				{Name: "overlay-a", Reason: ExcludedOverlayReasonConstraintFailed},
+				{Name: "overlay-b", Reason: ExcludedOverlayReasonMixinConstraintFailed},
+			},
+		},
+		{
+			name:  "object form without reason",
+			input: `[{"name":"overlay-a"}]`,
+			expected: []ExcludedOverlay{
+				{Name: "overlay-a"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []ExcludedOverlay
+			err := json.Unmarshal([]byte(tt.input), &got)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !reflect.DeepEqual(got, tt.expected) {
+				t.Errorf("got %+v, want %+v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildMixinConstraintWarningReason(t *testing.T) {
+	tests := []struct {
+		name       string
+		constraint Constraint
+		result     ConstraintEvalResult
+		expected   string
+	}{
+		{
+			name:       "with error",
+			constraint: Constraint{Name: "kernel.version", Value: ">= 6.8"},
+			result:     ConstraintEvalResult{Passed: false, Error: errors.New("parse error")},
+			expected:   "mixin-constraint-failed: parse error",
+		},
+		{
+			name:       "without error",
+			constraint: Constraint{Name: "kernel.version", Value: ">= 6.8"},
+			result:     ConstraintEvalResult{Passed: false, Actual: "5.15"},
+			expected:   "mixin-constraint-failed: expected >= 6.8, got 5.15",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildMixinConstraintWarningReason(tt.constraint, tt.result)
+			if got != tt.expected {
+				t.Errorf("got %q, want %q", got, tt.expected)
+			}
+		})
 	}
 }
