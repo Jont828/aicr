@@ -151,7 +151,30 @@ func TestExtractCriteriaFromSnapshot(t *testing.T) {
 			},
 		},
 		{
-			name: "GPU H200 from model field",
+			name: "K8s service from version string LKE",
+			snapshot: &snapshotter.Snapshot{
+				Measurements: []*measurement.Measurement{
+					{
+						Type: measurement.TypeK8s,
+						Subtypes: []measurement.Subtype{
+							{
+								Name: "server",
+								Data: map[string]measurement.Reading{
+									"version": measurement.Str("v1.31.9+lke7"),
+								},
+							},
+						},
+					},
+				},
+			},
+			validate: func(t *testing.T, c *Criteria) {
+				if c.Service != CriteriaServiceLKE {
+					t.Errorf("Service = %v, want %v", c.Service, CriteriaServiceLKE)
+				}
+			},
+		},
+		{
+			name: "GPU RTX PRO 6000 from model field",
 			snapshot: &snapshotter.Snapshot{
 				Measurements: []*measurement.Measurement{
 					{
@@ -160,7 +183,7 @@ func TestExtractCriteriaFromSnapshot(t *testing.T) {
 							{
 								Name: "device",
 								Data: map[string]measurement.Reading{
-									"model": measurement.Str("NVIDIA H200 141GB HBM3e"),
+									"model": measurement.Str("NVIDIA RTX PRO 6000 Blackwell"),
 								},
 							},
 						},
@@ -168,8 +191,8 @@ func TestExtractCriteriaFromSnapshot(t *testing.T) {
 				},
 			},
 			validate: func(t *testing.T, c *Criteria) {
-				if c.Accelerator != CriteriaAcceleratorH200 {
-					t.Errorf("Accelerator = %v, want %v", c.Accelerator, CriteriaAcceleratorH200)
+				if c.Accelerator != CriteriaAcceleratorRTXPro6000 {
+					t.Errorf("Accelerator = %v, want %v", c.Accelerator, CriteriaAcceleratorRTXPro6000)
 				}
 			},
 		},
@@ -434,6 +457,8 @@ func TestMatchAccelerator(t *testing.T) {
 		{"GB200", "NVIDIA GB200", CriteriaAcceleratorGB200},
 		{"B200", "NVIDIA-B200", CriteriaAcceleratorB200},
 		{"L40", "NVIDIA L40S", CriteriaAcceleratorL40},
+		{"RTX PRO 6000", "RTX PRO 6000", CriteriaAcceleratorRTXPro6000},
+		{"RTX PRO 6000 Blackwell", "NVIDIA RTX PRO 6000 Blackwell", CriteriaAcceleratorRTXPro6000},
 		{"unknown model", "NVIDIA T4", ""},
 		{"empty string", "", ""},
 	}
