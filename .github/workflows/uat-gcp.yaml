@@ -37,7 +37,7 @@ jobs:
       GCP_WIF_SERVICE_ACCOUNT: "github-actions@eidosx.iam.gserviceaccount.com"
       DEPLOYMENT_ID: "aicr-uat-${{ github.run_id }}"
       CLUSTER_CONFIG: tests/uat/gcp/config.yaml
-      GKE_IMAGE: "ghcr.io/mchmarny/cluster/gke:latest"
+      GKE_ACTUATOR_IMAGE: "ghcr.io/mchmarny/cluster/gke:latest"
       VALIDATOR_IMAGE_PREFIX: "ghcr.io/nvidia/aicr-validators"
       VALIDATOR_TAG: "uat-${{ github.run_id }}"
 
@@ -94,19 +94,6 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@77e7a554d41e2ee56fc945c52dfd3f33d12def9a  # v2.1.4
 
-      # Capacity check — shared reservations (from another project) cannot be
-      # queried via gcloud compute reservations describe. Log the reservation
-      # path for debugging and let the provisioner handle availability.
-      - name: Check GPU node pool capacity
-        id: capacity
-        run: |
-          set -euo pipefail
-          GPU_WORKER='.compute.gke.nodePools.workers[] | select(.name == "gpu-worker")'
-          RESERVATION_PATH=$(yq eval "${GPU_WORKER}.nodeConfig.capacityReservations[0]" "$CLUSTER_CONFIG")
-          ZONE=$(yq eval "${GPU_WORKER}.zones[0]" "$CLUSTER_CONFIG")
-          echo "Reservation: ${RESERVATION_PATH}, zone: ${ZONE}"
-          echo "Shared reservation — capacity verified by provisioner at apply time"
-
       # Deps
       - name: Install tools
         id: deps
@@ -125,7 +112,6 @@ jobs:
         run: |
           set -euox pipefail
           yq -i '.deployment.id = strenv(DEPLOYMENT_ID)' "$CLUSTER_CONFIG"
-          yq -i '.cluster.gke.name = strenv(DEPLOYMENT_ID)' "$CLUSTER_CONFIG"
           cat "$CLUSTER_CONFIG"
 
       # Bringup
@@ -137,7 +123,7 @@ jobs:
             -e CONFIG_CONTENT="$(base64 < $CLUSTER_CONFIG)" \
             -e AUTO_APPROVE=true \
             -e GOOGLE_APPLICATION_CREDENTIALS_CONTENT="$(base64 < ${{ steps.auth.outputs.credentials_file_path }})" \
-            ${{ env.GKE_IMAGE }} apply
+            ${{ env.GKE_ACTUATOR_IMAGE }} apply
 
       # Connect
       - name: Connect to Cluster
@@ -179,7 +165,7 @@ jobs:
               -e CONFIG_CONTENT="$(base64 < $CLUSTER_CONFIG)" \
               -e AUTO_APPROVE=true \
               -e GOOGLE_APPLICATION_CREDENTIALS_CONTENT="$(base64 < ${{ steps.auth.outputs.credentials_file_path }})" \
-              ${{ env.GKE_IMAGE }} destroy; then
+              ${{ env.GKE_ACTUATOR_IMAGE }} destroy; then
               echo "Cluster destroyed successfully"
               break
             fi
