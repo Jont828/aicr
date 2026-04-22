@@ -94,28 +94,18 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@77e7a554d41e2ee56fc945c52dfd3f33d12def9a  # v2.1.4
 
-      # Capacity check (reads reservation path and zone from cluster config)
+      # Capacity check — shared reservations (from another project) cannot be
+      # queried via gcloud compute reservations describe. Log the reservation
+      # path for debugging and let the provisioner handle availability.
       - name: Check GPU node pool capacity
         id: capacity
         run: |
           set -euo pipefail
           GPU_WORKER='.compute.gke.nodePools.workers[] | select(.name == "gpu-worker")'
-          # Reservation path: projects/<project>/reservations/<name>
           RESERVATION_PATH=$(yq eval "${GPU_WORKER}.nodeConfig.capacityReservations[0]" "$CLUSTER_CONFIG")
-          RESERVATION=$(echo "${RESERVATION_PATH}" | awk -F/ '{print $NF}')
           ZONE=$(yq eval "${GPU_WORKER}.zones[0]" "$CLUSTER_CONFIG")
-          echo "Reservation: ${RESERVATION}, zone: ${ZONE}"
-
-          AVAILABLE=$(gcloud compute reservations describe "${RESERVATION}" \
-            --project="${GCP_PROJECT_ID}" \
-            --zone="${ZONE}" \
-            --format="value(specificReservation.count - specificReservation.inUseCount)")
-          echo "available=${AVAILABLE}" >> "$GITHUB_OUTPUT"
-          echo "Available instances in reservation ${RESERVATION}: ${AVAILABLE}"
-          if [[ "${AVAILABLE}" -lt 1 ]]; then
-            echo "::error::No available instances in reservation ${RESERVATION} (zone: ${ZONE})"
-            exit 1
-          fi
+          echo "Reservation: ${RESERVATION_PATH}, zone: ${ZONE}"
+          echo "Shared reservation — capacity verified by provisioner at apply time"
 
       # Deps
       - name: Install tools
