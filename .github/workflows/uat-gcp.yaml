@@ -163,7 +163,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          yq -i '.deployment.destroy = "true"' "$CLUSTER_CONFIG"
+          yq -i '.deployment.destroy = true' "$CLUSTER_CONFIG"
           cat "$CLUSTER_CONFIG"
           for attempt in 1 2 3; do
             echo "Destroy attempt ${attempt}..."
