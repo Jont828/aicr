@@ -13,9 +13,9 @@
 // limitations under the License.
 
 /*
-Package argocd provides ArgoCD Application generation for Cloud Native Stack recipes.
+Package argocd provides Argo CD Application generation for Cloud Native Stack recipes.
 
-The argocd package generates ArgoCD Application manifests from RecipeResult objects,
+The argocd package generates Argo CD Application manifests from RecipeResult objects,
 enabling GitOps-based deployment of GPU-accelerated infrastructure components.
 
 # Overview
@@ -28,15 +28,13 @@ The package supports the App of Apps pattern, generating:
 
 # Deployment Ordering
 
-Components are deployed in order using ArgoCD sync-waves. The deployment order
+Components are deployed in order using Argo CD sync-waves. The deployment order
 is determined by the recipe's DeploymentOrder field. Components are assigned
 sync-wave annotations starting from 0.
 
 # Usage
 
-	generator := argocd.NewGenerator()
-
-	input := &argocd.GeneratorInput{
+	generator := &argocd.Generator{
 		RecipeResult:     recipeResult,
 		ComponentValues:  componentValues,
 		Version:          "v0.9.0",
@@ -44,7 +42,7 @@ sync-wave annotations starting from 0.
 		IncludeChecksums: true,
 	}
 
-	output, err := generator.Generate(ctx, input, "/path/to/output")
+	output, err := generator.Generate(ctx, "/path/to/output")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -58,18 +56,18 @@ sync-wave annotations starting from 0.
 	├── README.md                  # Deployment instructions
 	├── checksums.txt              # SHA256 checksums (optional)
 	├── cert-manager/
-	│   ├── application.yaml       # ArgoCD Application (sync-wave: 0)
+	│   ├── application.yaml       # Argo CD Application (sync-wave: 0)
 	│   └── values.yaml
 	├── gpu-operator/
-	│   ├── application.yaml       # ArgoCD Application (sync-wave: 1)
+	│   ├── application.yaml       # Argo CD Application (sync-wave: 1)
 	│   └── values.yaml
 	└── network-operator/
-	    ├── application.yaml       # ArgoCD Application (sync-wave: 2)
+	    ├── application.yaml       # Argo CD Application (sync-wave: 2)
 	    └── values.yaml
 
 # Configuration
 
-The RepoURL field in GeneratorInput sets the Git repository URL in the
+The RepoURL field in Generator sets the Git repository URL in the
 app-of-apps.yaml manifest. If not provided, a placeholder URL is used
 that must be updated manually before deployment.
 */

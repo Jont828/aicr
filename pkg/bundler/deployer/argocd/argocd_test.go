@@ -23,21 +23,13 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/NVIDIA/aicr/pkg/bundler/deployer/shared"
+	"github.com/NVIDIA/aicr/pkg/bundler/deployer"
 	"github.com/NVIDIA/aicr/pkg/recipe"
 )
 
 const testVersion = "v1.0.0"
 
-func TestNewGenerator(t *testing.T) {
-	g := NewGenerator()
-	if g == nil {
-		t.Fatal("NewGenerator() returned nil")
-	}
-}
-
 func TestGenerate_Success(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
@@ -63,7 +55,7 @@ func TestGenerate_Success(t *testing.T) {
 	}
 	recipeResult.DeploymentOrder = []string{"cert-manager", "gpu-operator"}
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: recipeResult,
 		ComponentValues: map[string]map[string]any{
 			"cert-manager": {
@@ -78,7 +70,7 @@ func TestGenerate_Success(t *testing.T) {
 		Version: "v0.9.0",
 	}
 
-	output, err := g.Generate(ctx, input, outputDir)
+	output, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -155,35 +147,20 @@ func TestGenerate_Success(t *testing.T) {
 	}
 }
 
-func TestGenerate_NilInput(t *testing.T) {
-	g := NewGenerator()
-	ctx := context.Background()
-	outputDir := t.TempDir()
-
-	_, err := g.Generate(ctx, nil, outputDir)
-	if err == nil {
-		t.Fatal("Generate() should return error for nil input")
-	}
-}
-
 func TestGenerate_NilRecipeResult(t *testing.T) {
-	g := NewGenerator()
+	g := &Generator{
+		Version: "v0.9.0",
+	}
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
-	input := &GeneratorInput{
-		RecipeResult: nil,
-		Version:      "v0.9.0",
-	}
-
-	_, err := g.Generate(ctx, input, outputDir)
+	_, err := g.Generate(ctx, outputDir)
 	if err == nil {
 		t.Fatal("Generate() should return error for nil recipe result")
 	}
 }
 
 func TestGenerate_EmptyComponents(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
@@ -191,12 +168,12 @@ func TestGenerate_EmptyComponents(t *testing.T) {
 	recipeResult.Metadata.Version = testVersion
 	recipeResult.ComponentRefs = []recipe.ComponentRef{}
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: recipeResult,
 		Version:      "v0.9.0",
 	}
 
-	output, err := g.Generate(ctx, input, outputDir)
+	output, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -221,7 +198,6 @@ func TestGenerate_EmptyComponents(t *testing.T) {
 }
 
 func TestGenerate_WithRepoURL(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
@@ -240,13 +216,13 @@ func TestGenerate_WithRepoURL(t *testing.T) {
 		},
 	}
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: recipeResult,
 		Version:      "v0.9.0",
 		RepoURL:      customRepoURL,
 	}
 
-	_, err := g.Generate(ctx, input, outputDir)
+	_, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -273,7 +249,6 @@ func TestGenerate_WithRepoURL(t *testing.T) {
 }
 
 func TestGenerate_WithOCIRepoURL(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
@@ -293,7 +268,7 @@ func TestGenerate_WithOCIRepoURL(t *testing.T) {
 		},
 	}
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult:    recipeResult,
 		ComponentValues: map[string]map[string]any{"gpu-operator": {}},
 		Version:         "v0.9.0",
@@ -301,7 +276,7 @@ func TestGenerate_WithOCIRepoURL(t *testing.T) {
 		TargetRevision:  ociTag,
 	}
 
-	_, err := g.Generate(ctx, input, outputDir)
+	_, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -336,7 +311,6 @@ func TestGenerate_WithOCIRepoURL(t *testing.T) {
 }
 
 func TestGenerate_DefaultRepoURL_InChildApplications(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
@@ -353,13 +327,13 @@ func TestGenerate_DefaultRepoURL_InChildApplications(t *testing.T) {
 		},
 	}
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult:    recipeResult,
 		ComponentValues: map[string]map[string]any{"gpu-operator": {}},
 		Version:         "v0.9.0",
 	}
 
-	_, err := g.Generate(ctx, input, outputDir)
+	_, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -378,7 +352,6 @@ func TestGenerate_DefaultRepoURL_InChildApplications(t *testing.T) {
 }
 
 func TestGenerate_WithChecksums(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
@@ -404,13 +377,13 @@ func TestGenerate_WithChecksums(t *testing.T) {
 	}
 	recipeResult.DeploymentOrder = []string{"cert-manager", "gpu-operator"}
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult:     recipeResult,
 		Version:          "v0.9.0",
 		IncludeChecksums: true,
 	}
 
-	output, err := g.Generate(ctx, input, outputDir)
+	output, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -447,8 +420,105 @@ func TestGenerate_WithChecksums(t *testing.T) {
 	}
 }
 
+func TestGenerate_DataFiles(t *testing.T) {
+	recipeResult := func() *recipe.RecipeResult {
+		r := &recipe.RecipeResult{}
+		r.Metadata.Version = testVersion
+		r.ComponentRefs = []recipe.ComponentRef{
+			{Name: "gpu-operator", Namespace: "gpu-operator", Chart: "gpu-operator", Version: "v25.3.3", Type: "helm", Source: "https://helm.ngc.nvidia.com/nvidia"},
+		}
+		return r
+	}
+
+	tests := []struct {
+		name             string
+		stageDataFile    string // relative path to create under outputDir (empty = skip)
+		includeChecksums bool
+		dataFiles        []string
+		wantErr          bool
+		wantErrMsg       string
+	}{
+		{
+			name:             "valid data file included in checksums",
+			stageDataFile:    "data/overrides.yaml",
+			includeChecksums: true,
+			dataFiles:        []string{"data/overrides.yaml"},
+		},
+		{
+			name:       "path traversal rejected",
+			dataFiles:  []string{"../../../etc/passwd"},
+			wantErr:    true,
+			wantErrMsg: "escapes base directory",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			outputDir := t.TempDir()
+
+			if tt.stageDataFile != "" {
+				full := filepath.Join(outputDir, tt.stageDataFile)
+				if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+					t.Fatalf("stage dir: %v", err)
+					return
+				}
+				if err := os.WriteFile(full, []byte("key: value"), 0600); err != nil {
+					t.Fatalf("stage file: %v", err)
+					return
+				}
+			}
+
+			g := &Generator{
+				RecipeResult:     recipeResult(),
+				Version:          "v0.9.0",
+				IncludeChecksums: tt.includeChecksums,
+				DataFiles:        tt.dataFiles,
+			}
+
+			output, err := g.Generate(ctx, outputDir)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+					return
+				}
+				if !strings.Contains(err.Error(), tt.wantErrMsg) {
+					t.Errorf("expected error containing %q, got: %v", tt.wantErrMsg, err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Generate() unexpected error = %v", err)
+				return
+			}
+
+			found := false
+			for _, f := range output.Files {
+				if strings.HasSuffix(f, tt.stageDataFile) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("data file %q not included in output.Files", tt.stageDataFile)
+			}
+
+			if tt.includeChecksums {
+				content, readErr := os.ReadFile(filepath.Join(outputDir, "checksums.txt"))
+				if readErr != nil {
+					t.Fatalf("read checksums.txt: %v", readErr)
+					return
+				}
+				if !strings.Contains(string(content), tt.stageDataFile) {
+					t.Errorf("checksums.txt should contain %q entry", tt.stageDataFile)
+				}
+			}
+		})
+	}
+}
+
 func TestGenerate_ContextCancellation(t *testing.T) {
-	g := NewGenerator()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
@@ -467,12 +537,12 @@ func TestGenerate_ContextCancellation(t *testing.T) {
 		},
 	}
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: recipeResult,
 		Version:      "v0.9.0",
 	}
 
-	_, err := g.Generate(ctx, input, outputDir)
+	_, err := g.Generate(ctx, outputDir)
 	if err == nil {
 		t.Fatal("Generate() should return error for cancelled context")
 	}
@@ -527,7 +597,7 @@ func TestSortComponentRefsByDeploymentOrder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := shared.SortComponentRefsByDeploymentOrder(tt.refs, tt.order)
+			result := deployer.SortComponentRefsByDeploymentOrder(tt.refs, tt.order)
 
 			if len(result) != len(tt.expected) {
 				t.Fatalf("Expected %d components, got %d", len(tt.expected), len(result))
@@ -562,20 +632,19 @@ func TestSafeJoin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := shared.SafeJoin(tt.dir, tt.input)
+			result, err := deployer.SafeJoin(tt.dir, tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("shared.SafeJoin(%q, %q) error = %v, wantErr %v", tt.dir, tt.input, err, tt.wantErr)
+				t.Errorf("deployer.SafeJoin(%q, %q) error = %v, wantErr %v", tt.dir, tt.input, err, tt.wantErr)
 				return
 			}
 			if err == nil && result == "" {
-				t.Errorf("shared.SafeJoin(%q, %q) returned empty path", tt.dir, tt.input)
+				t.Errorf("deployer.SafeJoin(%q, %q) returned empty path", tt.dir, tt.input)
 			}
 		})
 	}
 }
 
 func TestApplicationData_NamespaceFromComponentRef(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
@@ -593,12 +662,12 @@ func TestApplicationData_NamespaceFromComponentRef(t *testing.T) {
 	}
 	recipeResult.DeploymentOrder = []string{"gpu-operator"}
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: recipeResult,
 		Version:      "v0.9.0",
 	}
 
-	_, err := g.Generate(ctx, input, outputDir)
+	_, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -633,8 +702,8 @@ func TestIsSafePathComponent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := shared.IsSafePathComponent(tt.input); got != tt.want {
-				t.Errorf("shared.IsSafePathComponent(%q) = %v, want %v", tt.input, got, tt.want)
+			if got := deployer.IsSafePathComponent(tt.input); got != tt.want {
+				t.Errorf("deployer.IsSafePathComponent(%q) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
 	}
@@ -653,7 +722,7 @@ func TestNormalizeVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := shared.NormalizeVersion(tt.input)
+			result := deployer.NormalizeVersion(tt.input)
 			if result != tt.expected {
 				t.Errorf("NormalizeVersion(%s) = %s, want %s", tt.input, result, tt.expected)
 			}
@@ -662,7 +731,6 @@ func TestNormalizeVersion(t *testing.T) {
 }
 
 func TestGenerate_KustomizeOnly(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
@@ -680,13 +748,13 @@ func TestGenerate_KustomizeOnly(t *testing.T) {
 	}
 	recipeResult.DeploymentOrder = []string{"my-kustomize-app"}
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult:    recipeResult,
 		ComponentValues: map[string]map[string]any{},
 		Version:         "v0.9.0",
 	}
 
-	output, err := g.Generate(ctx, input, outputDir)
+	output, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -741,7 +809,6 @@ func TestGenerate_KustomizeOnly(t *testing.T) {
 }
 
 func TestGenerate_MixedHelmAndKustomize(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
@@ -767,7 +834,7 @@ func TestGenerate_MixedHelmAndKustomize(t *testing.T) {
 	}
 	recipeResult.DeploymentOrder = []string{"cert-manager", "my-kustomize-app"}
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: recipeResult,
 		ComponentValues: map[string]map[string]any{
 			"cert-manager":     {"crds": map[string]any{"enabled": true}},
@@ -776,7 +843,7 @@ func TestGenerate_MixedHelmAndKustomize(t *testing.T) {
 		Version: "v0.9.0",
 	}
 
-	_, err := g.Generate(ctx, input, outputDir)
+	_, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -824,10 +891,9 @@ func TestGenerate_MixedHelmAndKustomize(t *testing.T) {
 	}
 }
 
-// TestGenerate_Reproducible verifies that ArgoCD bundle generation is deterministic.
+// TestGenerate_Reproducible verifies that Argo CD bundle generation is deterministic.
 // Running Generate() twice with the same input should produce identical output files.
 func TestGenerate_Reproducible(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 
 	recipeResult := &recipe.RecipeResult{}
@@ -852,7 +918,7 @@ func TestGenerate_Reproducible(t *testing.T) {
 	}
 	recipeResult.DeploymentOrder = []string{"cert-manager", "gpu-operator"}
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: recipeResult,
 		ComponentValues: map[string]map[string]any{
 			"cert-manager": {
@@ -874,7 +940,7 @@ func TestGenerate_Reproducible(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		outputDir := t.TempDir()
 
-		_, err := g.Generate(ctx, input, outputDir)
+		_, err := g.Generate(ctx, outputDir)
 		if err != nil {
 			t.Fatalf("iteration %d: Generate() error = %v", i, err)
 		}
@@ -922,7 +988,7 @@ func TestGenerate_Reproducible(t *testing.T) {
 		}
 	}
 
-	t.Logf("ArgoCD reproducibility verified: both iterations produced %d identical files", len(fileContents[0]))
+	t.Logf("Argo CD reproducibility verified: both iterations produced %d identical files", len(fileContents[0]))
 }
 
 // assertValidYAML reads the file at path and fails the test if it is not valid YAML.
@@ -939,7 +1005,7 @@ func assertValidYAML(t *testing.T, path string) {
 }
 
 // TestGenerate_ApplicationYAMLStructure verifies that generated application.yaml files
-// are valid YAML with the expected ArgoCD Application structure (issue #410).
+// are valid YAML with the expected Argo CD Application structure (issue #410).
 func TestGenerate_ApplicationYAMLStructure(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1014,7 +1080,6 @@ func TestGenerate_ApplicationYAMLStructure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewGenerator()
 			ctx := context.Background()
 			outputDir := t.TempDir()
 
@@ -1023,13 +1088,13 @@ func TestGenerate_ApplicationYAMLStructure(t *testing.T) {
 			recipeResult.ComponentRefs = tt.refs
 			recipeResult.DeploymentOrder = []string{tt.refs[0].Name}
 
-			input := &GeneratorInput{
+			g := &Generator{
 				RecipeResult:    recipeResult,
 				ComponentValues: map[string]map[string]any{tt.refs[0].Name: {}},
 				Version:         "v0.9.0",
 			}
 
-			_, err := g.Generate(ctx, input, outputDir)
+			_, err := g.Generate(ctx, outputDir)
 			if err != nil {
 				t.Fatalf("Generate() error = %v", err)
 			}
@@ -1052,7 +1117,6 @@ func TestGenerate_ApplicationYAMLStructure(t *testing.T) {
 
 // TestGenerate_NoTimestampInOutput verifies that generated files don't contain timestamps.
 func TestGenerate_NoTimestampInOutput(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
@@ -1070,7 +1134,7 @@ func TestGenerate_NoTimestampInOutput(t *testing.T) {
 	}
 	recipeResult.DeploymentOrder = []string{"gpu-operator"}
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: recipeResult,
 		ComponentValues: map[string]map[string]any{
 			"gpu-operator": {},
@@ -1079,7 +1143,7 @@ func TestGenerate_NoTimestampInOutput(t *testing.T) {
 		RepoURL: "https://github.com/test/repo.git",
 	}
 
-	_, err := g.Generate(ctx, input, outputDir)
+	_, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}

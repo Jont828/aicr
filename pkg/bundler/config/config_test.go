@@ -432,13 +432,23 @@ func TestDeployerOptions(t *testing.T) {
 }
 
 func TestParseValueOverrides(t *testing.T) {
+	// lookup returns the value of the first entry matching component+path, or "" if absent.
+	lookup := func(cps []ComponentPath, component, path string) string {
+		for _, cp := range cps {
+			if cp.Component == component && cp.Path == path && cp.Value != nil {
+				return *cp.Value
+			}
+		}
+		return ""
+	}
+
 	t.Run("valid single override", func(t *testing.T) {
 		result, err := ParseValueOverrides([]string{"gpuoperator:gds.enabled=true"})
 		if err != nil {
 			t.Fatalf("ParseValueOverrides() error = %v", err)
 		}
-		if result["gpuoperator"]["gds.enabled"] != testValueTrue {
-			t.Errorf("result[gpuoperator][gds.enabled] = %s, want true", result["gpuoperator"]["gds.enabled"])
+		if got := lookup(result, "gpuoperator", "gds.enabled"); got != testValueTrue {
+			t.Errorf("gpuoperator:gds.enabled = %q, want true", got)
 		}
 	})
 
@@ -450,11 +460,11 @@ func TestParseValueOverrides(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ParseValueOverrides() error = %v", err)
 		}
-		if result["gpuoperator"]["gds.enabled"] != testValueTrue {
-			t.Errorf("result[gpuoperator][gds.enabled] = %s, want true", result["gpuoperator"]["gds.enabled"])
+		if got := lookup(result, "gpuoperator", "gds.enabled"); got != testValueTrue {
+			t.Errorf("gpuoperator:gds.enabled = %q, want true", got)
 		}
-		if result["gpuoperator"]["driver.version"] != "570.86.16" {
-			t.Errorf("result[gpuoperator][driver.version] = %s, want 570.86.16", result["gpuoperator"]["driver.version"])
+		if got := lookup(result, "gpuoperator", "driver.version"); got != "570.86.16" {
+			t.Errorf("gpuoperator:driver.version = %q, want 570.86.16", got)
 		}
 	})
 
@@ -466,11 +476,11 @@ func TestParseValueOverrides(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ParseValueOverrides() error = %v", err)
 		}
-		if result["gpuoperator"]["gds.enabled"] != testValueTrue {
-			t.Errorf("result[gpuoperator][gds.enabled] = %s, want true", result["gpuoperator"]["gds.enabled"])
+		if got := lookup(result, "gpuoperator", "gds.enabled"); got != testValueTrue {
+			t.Errorf("gpuoperator:gds.enabled = %q, want true", got)
 		}
-		if result["networkoperator"]["rdma.enabled"] != "false" {
-			t.Errorf("result[networkoperator][rdma.enabled] = %s, want false", result["networkoperator"]["rdma.enabled"])
+		if got := lookup(result, "networkoperator", "rdma.enabled"); got != "false" {
+			t.Errorf("networkoperator:rdma.enabled = %q, want false", got)
 		}
 	})
 
@@ -517,10 +527,225 @@ func TestParseValueOverrides(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ParseValueOverrides() error = %v", err)
 		}
-		if result["bundler"]["path"] != "value=with=equals" {
-			t.Errorf("result[bundler][path] = %s, want value=with=equals", result["bundler"]["path"])
+		if got := lookup(result, "bundler", "path"); got != "value=with=equals" {
+			t.Errorf("bundler:path = %q, want value=with=equals", got)
 		}
 	})
+
+	t.Run("value with spaces", func(t *testing.T) {
+		// safePathPattern applies only to path segments, not values.
+		// Values may contain spaces and other arbitrary characters.
+		result, err := ParseValueOverrides([]string{"gpuoperator:custom.label=hello world"})
+		if err != nil {
+			t.Fatalf("ParseValueOverrides() error = %v", err)
+		}
+		if got := lookup(result, "gpuoperator", "custom.label"); got != "hello world" {
+			t.Errorf("gpuoperator:custom.label = %q, want %q", got, "hello world")
+		}
+	})
+
+	t.Run("unsafe path segment rejected", func(t *testing.T) {
+		_, err := ParseValueOverrides([]string{"bundler:path.{{inject}}=x"})
+		if err == nil {
+			t.Error("ParseValueOverrides() expected error for unsafe path segment, got nil")
+		}
+	})
+
+	t.Run("helm-style array index rejected", func(t *testing.T) {
+		// Helm's `foo.bar[N].baz` list-indexing syntax is intentionally
+		// rejected at parse time. The downstream path walker in
+		// pkg/component/overrides.go (`getOrCreateNestedMap` / `setMapValueByPath`)
+		// splits on `.` only and treats `tolerations[2]` as a literal map key
+		// — so permitting the syntax here would silently produce bundles with
+		// a stringly-keyed `"tolerations[2]"` field instead of the indexed
+		// list element the user intended. Rejecting up front fails loudly.
+		tests := []struct {
+			name  string
+			input string
+		}{
+			{
+				name:  "tolerations index",
+				input: "networkoperator:operator.tolerations[2].key=aicr.nvidia.com/kwok-test",
+			},
+			{
+				name:  "env index",
+				input: "gpuoperator:driver.env[3].name=CUDA_VISIBLE_DEVICES",
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				if _, err := ParseValueOverrides([]string{tt.input}); err == nil {
+					t.Errorf("ParseValueOverrides(%q) should have rejected Helm array index syntax — downstream walker can't interpret it", tt.input)
+				}
+			})
+		}
+	})
+}
+
+// TestWithDynamicValues verifies the functional option sets dynamic value paths
+// on the Config and that the getter returns a deep copy (mutations don't leak).
+func TestWithDynamicValues(t *testing.T) {
+	input := map[string][]string{
+		"alloy": {"clusterName", "subnetName"},
+	}
+	cfg := NewConfig(WithDynamicValues(input))
+
+	// HasDynamicValues should be true
+	if !cfg.HasDynamicValues() {
+		t.Error("HasDynamicValues() should be true after WithDynamicValues")
+	}
+
+	// DynamicValues should return a deep copy
+	got := cfg.DynamicValues()
+	if len(got["alloy"]) != 2 {
+		t.Fatalf("DynamicValues() returned %d paths, want 2", len(got["alloy"]))
+	}
+
+	// Mutating the returned copy should not affect the config
+	got["alloy"] = append(got["alloy"], "injected")
+	if len(cfg.DynamicValues()["alloy"]) != 2 {
+		t.Error("DynamicValues() should return independent copy; mutation leaked")
+	}
+}
+
+// TestWithDynamicValues_Nil verifies that nil input is a no-op.
+func TestWithDynamicValues_Nil(t *testing.T) {
+	cfg := NewConfig(WithDynamicValues(nil))
+	if cfg.HasDynamicValues() {
+		t.Error("HasDynamicValues() should be false for nil input")
+	}
+}
+
+// TestHasDynamicValues_Empty verifies default config has no dynamic values.
+func TestHasDynamicValues_Empty(t *testing.T) {
+	cfg := NewConfig()
+	if cfg.HasDynamicValues() {
+		t.Error("HasDynamicValues() should be false for default config")
+	}
+}
+
+func TestParseDynamicValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		inputs  []string
+		want    map[string][]string
+		wantErr bool
+	}{
+		{
+			name:   "single component single path",
+			inputs: []string{"alloy:clusterName"},
+			want:   map[string][]string{"alloy": {"clusterName"}},
+		},
+		{
+			name:   "single component multiple paths",
+			inputs: []string{"alloy:clusterName", "alloy:subnetName"},
+			want:   map[string][]string{"alloy": {"clusterName", "subnetName"}},
+		},
+		{
+			name:   "multiple components",
+			inputs: []string{"alloy:clusterName", "gpuoperator:driver.version"},
+			want:   map[string][]string{"alloy": {"clusterName"}, "gpuoperator": {"driver.version"}},
+		},
+		{
+			name:   "nested path",
+			inputs: []string{"gpuoperator:driver.version"},
+			want:   map[string][]string{"gpuoperator": {"driver.version"}},
+		},
+		{
+			name:    "missing colon",
+			inputs:  []string{"alloy-clusterName"},
+			wantErr: true,
+		},
+		{
+			name:    "empty component",
+			inputs:  []string{":clusterName"},
+			wantErr: true,
+		},
+		{
+			name:    "empty path",
+			inputs:  []string{"alloy:"},
+			wantErr: true,
+		},
+		{
+			name:   "empty input list",
+			inputs: []string{},
+			want:   map[string][]string{},
+		},
+		// Security: safePathPattern blocks dangerous path segments
+		{
+			name:    "template injection in path",
+			inputs:  []string{"gpuoperator:{{.Values.x}}"},
+			wantErr: true,
+		},
+		{
+			name:    "path traversal",
+			inputs:  []string{"gpuoperator:../../../etc/passwd"},
+			wantErr: true,
+		},
+		{
+			name:    "double dot segment",
+			inputs:  []string{"gpuoperator:foo..bar"},
+			wantErr: true,
+		},
+		{
+			name:    "space in path",
+			inputs:  []string{"gpuoperator:driver version"},
+			wantErr: true,
+		},
+		{
+			name:    "rejects =value",
+			inputs:  []string{"gpuoperator:driver.version=oops"},
+			wantErr: true,
+		},
+	}
+
+	// groupByComponent collapses the returned slice into a map[component][]paths
+	// for easy comparison against the map-shaped expectations.
+	groupByComponent := func(cps []ComponentPath) map[string][]string {
+		out := make(map[string][]string)
+		for _, cp := range cps {
+			if cp.Value != nil {
+				// ParseDynamicValues must not return entries with Value set.
+				panic("ParseDynamicValues returned an entry with Value != nil")
+			}
+			out[cp.Component] = append(out[cp.Component], cp.Path)
+		}
+		return out
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rawGot, err := ParseDynamicValues(tt.inputs)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseDynamicValues() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr {
+				return
+			}
+			got := groupByComponent(rawGot)
+			if len(got) != len(tt.want) {
+				t.Errorf("ParseDynamicValues() returned %d components, want %d", len(got), len(tt.want))
+				return
+			}
+			for component, wantPaths := range tt.want {
+				gotPaths, ok := got[component]
+				if !ok {
+					t.Errorf("ParseDynamicValues() missing component %q", component)
+					continue
+				}
+				if len(gotPaths) != len(wantPaths) {
+					t.Errorf("ParseDynamicValues() component %q has %d paths, want %d", component, len(gotPaths), len(wantPaths))
+					continue
+				}
+				for i, wantPath := range wantPaths {
+					if gotPaths[i] != wantPath {
+						t.Errorf("ParseDynamicValues() component %q path[%d] = %q, want %q", component, i, gotPaths[i], wantPath)
+					}
+				}
+			}
+		})
+	}
 }
 
 func TestParseDeployerType(t *testing.T) {
@@ -559,9 +784,9 @@ func TestParseDeployerType(t *testing.T) {
 func TestGetDeployerTypes(t *testing.T) {
 	types := GetDeployerTypes()
 
-	// Verify we get the expected types
-	if len(types) != 2 {
-		t.Errorf("GetDeployerTypes() returned %d types, want 2", len(types))
+	// Verify we get the expected types (helm, argocd, argocd-helm)
+	if len(types) != 3 {
+		t.Errorf("GetDeployerTypes() returned %d types, want 3", len(types))
 	}
 
 	// Verify types are sorted alphabetically

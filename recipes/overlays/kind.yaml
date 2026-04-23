@@ -72,8 +72,6 @@ spec:
                   - matchExpressions:
                       - key: node-role.kubernetes.io/control-plane
                         operator: DoesNotExist
-        nfd:
-          enabled: true
         # Use chart-default device plugin env in kind (no CDI overrides)
         devicePlugin:
           env: []
@@ -137,11 +135,11 @@ spec:
         grafana:
           resources:
             requests:
-              cpu: 50m
-              memory: 64Mi
+              cpu: 100m
+              memory: 128Mi
             limits:
-              cpu: 250m
-              memory: 256Mi
+              cpu: 500m
+              memory: 512Mi
         alertmanager:
           alertmanagerSpec:
             resources:
@@ -193,6 +191,7 @@ spec:
       version: "25.1.0"
       valuesFile: components/network-operator/values.yaml
       dependencyRefs:
+        - nfd
         - cert-manager
 
   validation:

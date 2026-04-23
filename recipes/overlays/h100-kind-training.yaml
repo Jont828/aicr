@@ -40,5 +40,6 @@ spec:
         - accelerator-metrics
         - ai-service-metrics
         - gang-scheduling
+        - secure-accelerator-access
         - pod-autoscaling
         - cluster-autoscaling

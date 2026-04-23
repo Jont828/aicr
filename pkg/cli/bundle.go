@@ -44,7 +44,7 @@ type bundleCmdOptions struct {
 	kubeconfig                 string
 	deployer                   config.DeployerType
 	repoURL                    string
-	valueOverrides             map[string]map[string]string
+	valueOverrides             []config.ComponentPath
 	systemNodeSelector         map[string]string
 	systemNodeTolerations      []corev1.Toleration
 	acceleratedNodeSelector    map[string]string
@@ -53,6 +53,9 @@ type bundleCmdOptions struct {
 	workloadSelector           map[string]string
 	estimatedNodeCount         int
 	targetRevision             string
+
+	// dynamicValues declares value paths provided at install time.
+	dynamicValues []config.ComponentPath
 
 	// attest enables bundle attestation and binary verification.
 	attest bool
@@ -139,7 +142,7 @@ func parseBundleCmdOptions(cmd *cli.Command) (*bundleCmdOptions, error) {
 		opts.outputDir = absOut
 	}
 
-	// When using ArgoCD deployer with OCI output and no explicit --repo,
+	// When using Argo CD deployer with OCI output and no explicit --repo,
 	// auto-populate repoURL from the OCI reference (issue #519).
 	if opts.deployer == config.DeployerArgoCD && opts.ociRef != nil && opts.repoURL == "" {
 		opts.repoURL = opts.ociRef.Registry + "/" + opts.ociRef.Repository
@@ -154,6 +157,12 @@ func parseBundleCmdOptions(cmd *cli.Command) (*bundleCmdOptions, error) {
 	opts.valueOverrides, err = config.ParseValueOverrides(cmd.StringSlice("set"))
 	if err != nil {
 		return nil, errors.Wrap(errors.ErrCodeInvalidRequest, "invalid --set flag", err)
+	}
+
+	// Parse dynamic value declarations from --dynamic flags
+	opts.dynamicValues, err = config.ParseDynamicValues(cmd.StringSlice("dynamic"))
+	if err != nil {
+		return nil, errors.Wrap(errors.ErrCodeInvalidRequest, "invalid --dynamic flag", err)
 	}
 
 	// Parse node selectors
@@ -208,7 +217,7 @@ func bundleCmd() *cli.Command {
 		Category: functionalCategoryName,
 		Usage:    "Generate deployment bundle from a given recipe.",
 		Description: `Generates a deployment bundle from a given recipe. 
-Use --deployer argocd to generate ArgoCD Applications.
+Use --deployer argocd to generate Argo CD Applications.
 
 Helm:
   - README.md: Root deployment guide with ordered steps
@@ -218,9 +227,9 @@ Helm:
   - <component>/README.md: Component install/upgrade/uninstall
   - checksums.txt: SHA256 checksums of generated files
 
-ArgoCD:
-  - app-of-apps.yaml: Parent ArgoCD Application
-  - <component>/application.yaml: ArgoCD Application per component
+Argo CD:
+  - app-of-apps.yaml: Parent Argo CD Application
+  - <component>/application.yaml: Argo CD Application per component
   - <component>/values.yaml: Values for each component
   - README.md: Deployment instructions
   - checksums.txt: SHA256 checksums of generated files
@@ -230,7 +239,7 @@ Examples:
 Generate Helm per-component bundle (default):
   aicr bundle --recipe recipe.yaml --output ./my-bundle
 
-Generate ArgoCD App of Apps:
+Generate Argo CD App of Apps:
   aicr bundle --recipe recipe.yaml --output ./my-bundle --deployer argocd
 
 Override values in generated bundle:
@@ -272,6 +281,14 @@ Package with explicit tag (overrides CLI version):
 	(format: component:path.to.field=value, e.g., --set gpuoperator:gds.enabled=true).
 	Use the special 'enabled' key to include/exclude components at bundle time
 	(e.g., --set awsebscsidriver:enabled=false to skip aws-ebs-csi-driver)`,
+				Category: "Deployment",
+			},
+			&cli.StringSliceFlag{
+				Name: "dynamic",
+				Usage: `Declare value paths as install-time parameters
+	(format: component:path.to.field, e.g., --dynamic alloy:clusterName).
+	Dynamic paths are removed from values.yaml and placed in cluster-values.yaml
+	for the user to fill in at install time.`,
 				Category: "Deployment",
 			},
 			&cli.StringSliceFlag{
@@ -320,7 +337,7 @@ Package with explicit tag (overrides CLI version):
 			&cli.StringFlag{
 				Name:     "repo",
 				Value:    "",
-				Usage:    "Git repository URL for ArgoCD applications (only used with --deployer argocd)",
+				Usage:    "Git repository URL for Argo CD applications (only used with --deployer argocd)",
 				Category: "Deployment",
 			},
 			&cli.BoolFlag{
@@ -376,8 +393,13 @@ func runBundleCmd(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	outputType := "Helm per-component bundle"
-	if opts.deployer == config.DeployerArgoCD {
-		outputType = "ArgoCD applications"
+	switch opts.deployer {
+	case config.DeployerHelm:
+		// default
+	case config.DeployerArgoCD:
+		outputType = "Argo CD applications"
+	case config.DeployerArgoCDHelm:
+		outputType = "Argo CD Helm chart app-of-apps"
 	}
 	slog.Info("generating bundle",
 		slog.String("deployer", opts.deployer.String()),
@@ -387,11 +409,10 @@ func runBundleCmd(ctx context.Context, cmd *cli.Command) error {
 		slog.Bool("oci", opts.ociRef != nil),
 	)
 
-	// Load recipe from file/URL/ConfigMap
-	rec, err := serializer.FromFileWithKubeconfig[recipe.RecipeResult](opts.recipeFilePath, opts.kubeconfig)
+	// Load recipe from file/URL/ConfigMap; auto-hydrates RecipeMetadata overlays.
+	rec, err := recipe.LoadFromFile(ctx, opts.recipeFilePath, opts.kubeconfig, version)
 	if err != nil {
-		slog.Error("failed to load recipe file", "error", err, "path", opts.recipeFilePath)
-		return errors.Wrap(errors.ErrCodeInternal, "failed to load recipe file", err)
+		return err
 	}
 
 	// Validate custom identity pattern if provided
@@ -409,7 +430,8 @@ func runBundleCmd(ctx context.Context, cmd *cli.Command) error {
 		config.WithTargetRevision(opts.targetRevision),
 		config.WithAttest(opts.attest),
 		config.WithCertificateIdentityRegexp(opts.certificateIdentityRegexp),
-		config.WithValueOverrides(opts.valueOverrides),
+		config.WithValueOverridePaths(opts.valueOverrides),
+		config.WithDynamicValuePaths(opts.dynamicValues),
 		config.WithSystemNodeSelector(opts.systemNodeSelector),
 		config.WithSystemNodeTolerations(opts.systemNodeTolerations),
 		config.WithAcceleratedNodeSelector(opts.acceleratedNodeSelector),

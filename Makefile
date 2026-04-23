@@ -340,6 +340,18 @@ release: ## Runs the full release process with goreleaser
 	@set -e; \
 	goreleaser release --clean --config .goreleaser.yaml --fail-fast --timeout 60m0s
 
+.PHONY: bump-prepare
+bump-prepare: ## Prepares a release for review (generates changelog, does not tag/push). Use TYPE=patch|minor|major|rc|beta
+	tools/bump prepare $(or $(TYPE),patch)
+
+.PHONY: bump-finalize
+bump-finalize: ## Commits, tags, and pushes a prepared release
+	tools/bump finalize
+
+.PHONY: bump-abort
+bump-abort: ## Cancels a prepared release
+	tools/bump abort
+
 .PHONY: bump-major
 bump-major: ## Bumps major version (1.2.3 → 2.0.0)
 	tools/bump major
@@ -351,6 +363,14 @@ bump-minor: ## Bumps minor version (1.2.3 → 1.3.0)
 .PHONY: bump-patch
 bump-patch: ## Bumps patch version (1.2.3 → 1.2.4)
 	tools/bump patch
+
+.PHONY: bump-rc
+bump-rc: ## One-shot RC pre-release bump (v1.2.3 → v1.2.4-rc1 → v1.2.4-rc2)
+	tools/bump rc
+
+.PHONY: bump-beta
+bump-beta: ## One-shot beta pre-release bump (v1.2.3 → v1.2.4-beta1 → v1.2.4-beta2)
+	tools/bump beta
 
 .PHONY: changelog
 changelog: ## Previews changelog for next release (does not commit)
@@ -586,6 +606,73 @@ endif
 .PHONY: kwok-test-all
 kwok-test-all: build ## Run all KWOK recipe tests in a shared cluster
 	@bash kwok/scripts/run-all-recipes.sh
+
+# =============================================================================
+# Component Testing
+# =============================================================================
+
+.PHONY: component-test
+component-test: build ## Test a single component end-to-end (COMPONENT=cert-manager [TIER=deploy])
+ifndef COMPONENT
+	@echo "Error: COMPONENT is required"
+	@echo "Usage: make component-test COMPONENT=cert-manager"
+	@echo "       make component-test COMPONENT=gpu-operator TIER=gpu-aware"
+	@exit 1
+endif
+	@set -e; \
+	TIER=$${TIER:-$$(bash tools/component-test/detect-tier.sh $(COMPONENT))}; \
+	echo "[INFO] Detected tier: $$TIER"; \
+	do_cleanup() { \
+		if [ "$${KEEP_CLUSTER:-false}" != "true" ]; then \
+			COMPONENT=$(COMPONENT) bash tools/component-test/cleanup.sh || true; \
+		fi; \
+	}; \
+	trap do_cleanup EXIT; \
+	TIER=$$TIER bash tools/component-test/ensure-cluster.sh; \
+	if [ "$$TIER" = "gpu-aware" ]; then \
+		GPU_PROFILE=$${GPU_PROFILE:-} GPU_COUNT=$${GPU_COUNT:-} bash tools/component-test/setup-gpu-mock.sh; \
+	fi; \
+	if [ "$$TIER" = "scheduling" ]; then \
+		echo "[INFO] Scheduling tier uses KWOK, not this harness."; \
+		echo "[INFO] Run: make kwok-e2e RECIPE=<recipe-name>"; \
+		echo "[INFO] No test was executed. Exiting with code 2."; \
+		exit 2; \
+	fi; \
+	COMPONENT=$(COMPONENT) HELM_NAMESPACE=$${HELM_NAMESPACE:-} bash tools/component-test/deploy-component.sh; \
+	COMPONENT=$(COMPONENT) bash tools/component-test/run-health-check.sh
+
+.PHONY: component-detect
+component-detect: ## Show detected test tier for a component (COMPONENT=cert-manager)
+ifndef COMPONENT
+	@echo "Error: COMPONENT is required"
+	@echo "Usage: make component-detect COMPONENT=cert-manager"
+	@exit 1
+endif
+	@bash tools/component-test/detect-tier.sh $(COMPONENT)
+
+.PHONY: component-cluster
+component-cluster: ## Create or reuse the component test Kind cluster
+	@TIER=$${TIER:-deploy} bash tools/component-test/ensure-cluster.sh
+
+.PHONY: component-deploy
+component-deploy: build ## Deploy a single component (COMPONENT=cert-manager)
+ifndef COMPONENT
+	@echo "Error: COMPONENT is required"
+	@exit 1
+endif
+	@COMPONENT=$(COMPONENT) HELM_NAMESPACE=$${HELM_NAMESPACE:-} bash tools/component-test/deploy-component.sh
+
+.PHONY: component-health
+component-health: ## Run health check for a deployed component (COMPONENT=cert-manager)
+ifndef COMPONENT
+	@echo "Error: COMPONENT is required"
+	@exit 1
+endif
+	@COMPONENT=$(COMPONENT) bash tools/component-test/run-health-check.sh
+
+.PHONY: component-cleanup
+component-cleanup: ## Clean up component test resources (COMPONENT=cert-manager [DELETE_CLUSTER=true])
+	@COMPONENT=$${COMPONENT:-} DELETE_CLUSTER=$${DELETE_CLUSTER:-false} KEEP_CLUSTER=$${KEEP_CLUSTER:-false} bash tools/component-test/cleanup.sh
 
 # =============================================================================
 # Combined Development Targets

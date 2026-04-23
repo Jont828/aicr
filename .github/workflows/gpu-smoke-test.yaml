@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: GPU Smoke Test (nvkind + T4)
+name: GPU Smoke Test (nvkind + L40G)
 
 on:
   schedule:
@@ -20,23 +20,6 @@ on:
   push:
     branches:
       - "pull-request/[0-9]+"
-    paths:
-      - '.github/workflows/gpu-smoke-test.yaml'
-      - '.github/actions/gpu-cluster-setup/**'
-      - '.github/actions/gpu-operator-install/**'
-      - '.github/actions/aicr-build/**'
-      - '.github/actions/gpu-test-cleanup/**'
-      - '.github/actions/load-versions/**'
-      # Collector/snapshotter — affects GPU detection and snapshot content
-      - 'pkg/collector/**'
-      - 'pkg/snapshotter/**'
-      - '.github/actions/gpu-snapshot-validate/**'
-      # Validator infrastructure — affects how validator Jobs are deployed and run
-      - 'pkg/validator/job/**'
-      - 'pkg/validator/catalog/**'
-      - 'pkg/defaults/timeouts.go'
-      # Conformance validator source
-      - 'validators/conformance/**'
   pull_request:
     types: [labeled]
   workflow_dispatch: {}  # Allow manual runs
@@ -44,18 +27,53 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
 
+  # Gate GPU tests on actual PR diff (against main), not the push diff.
+  # Without this, rebasing a pull-request/* branch includes merged changes
+  # in the push diff, causing GPU tests to trigger for unrelated PRs.
+  check-paths:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      should-run: ${{ steps.filter.outputs.matched }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d  # v4.0.1
+        id: filter
+        with:
+          base: main
+          filters: |
+            matched:
+              - '.github/workflows/gpu-smoke-test.yaml'
+              - '.github/actions/gpu-cluster-setup/**'
+              - '.github/actions/gpu-operator-install/**'
+              - '.github/actions/aicr-build/**'
+              - '.github/actions/gpu-test-cleanup/**'
+              - '.github/actions/load-versions/**'
+              - 'pkg/collector/**'
+              - 'pkg/snapshotter/**'
+              - '.github/actions/gpu-snapshot-validate/**'
+              - 'pkg/validator/job/**'
+              - 'pkg/validator/catalog/**'
+              - 'pkg/defaults/timeouts.go'
+              - 'validators/conformance/**'
+
   gpu-smoke-test:
+    needs: [check-paths]
     if: >
-      github.event_name != 'pull_request' ||
-      github.event.label.name == 'run-gpu-tests'
-    name: GPU Smoke Test (nvkind + T4)
-    runs-on: linux-amd64-gpu-t4-latest-1
+      always() && (
+        github.event_name == 'schedule' ||
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'pull_request' && github.event.label.name == 'run-gpu-tests') ||
+        (github.event_name == 'push' && needs.check-paths.outputs.should-run == 'true')
+      )
+    name: GPU Smoke Test (nvkind + L40G)
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: linux-amd64-gpu-l40g-latest-1
     timeout-minutes: 30
 
     env:
@@ -113,7 +131,7 @@ jobs:
       - name: Snapshot and validate GPU
         uses: ./.github/actions/gpu-snapshot-validate
         with:
-          gpu_model: T4
+          gpu_model: L40G
           min_gpu_count: '1'
           cluster_name: ${{ env.KIND_CLUSTER_NAME }}
 

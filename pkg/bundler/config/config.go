@@ -30,8 +30,12 @@ type DeployerType string
 const (
 	// DeployerHelm generates Helm per-component bundles (default).
 	DeployerHelm DeployerType = "helm"
-	// DeployerArgoCD generates ArgoCD App of Apps manifests.
+	// DeployerArgoCD generates Argo CD App of Apps manifests.
 	DeployerArgoCD DeployerType = "argocd"
+	// DeployerArgoCDHelm generates a Helm chart app-of-apps for Argo CD.
+	// All values are overridable at install time via helm --set.
+	// Use --dynamic to pre-populate specific paths in root values.yaml.
+	DeployerArgoCDHelm DeployerType = "argocd-helm"
 )
 
 // ParseDeployerType parses a string into a DeployerType.
@@ -42,6 +46,8 @@ func ParseDeployerType(s string) (DeployerType, error) {
 		return DeployerHelm, nil
 	case string(DeployerArgoCD):
 		return DeployerArgoCD, nil
+	case string(DeployerArgoCDHelm):
+		return DeployerArgoCDHelm, nil
 	default:
 		return "", errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid deployer type %q: must be one of %v", s, GetDeployerTypes()))
 	}
@@ -53,6 +59,7 @@ func GetDeployerTypes() []string {
 	types := []string{
 		string(DeployerHelm),
 		string(DeployerArgoCD),
+		string(DeployerArgoCDHelm),
 	}
 	sort.Strings(types)
 	return types
@@ -98,10 +105,10 @@ type Config struct {
 	// deployer specifies the deployment method (default: DeployerHelm).
 	deployer DeployerType
 
-	// repoURL specifies the Git repository URL for ArgoCD applications.
+	// repoURL specifies the Git repository URL for Argo CD applications.
 	repoURL string
 
-	// targetRevision specifies the target revision for the ArgoCD repo (default: "main").
+	// targetRevision specifies the target revision for the Argo CD repo (default: "main").
 	targetRevision string
 
 	// workloadGateTaint specifies the taint for skyhook-operator runtime required feature.
@@ -119,6 +126,10 @@ type Config struct {
 
 	// estimatedNodeCount is the estimated number of GPU nodes (0 = unset). Used by skyhook-operator for estimatedNodeCount Helm value.
 	estimatedNodeCount int
+
+	// dynamicValues declares value paths that should be provided at install time.
+	// Map structure: component_key -> [path1, path2, ...]
+	dynamicValues map[string][]string
 }
 
 // Getter methods for read-only access
@@ -207,12 +218,12 @@ func (c *Config) Deployer() DeployerType {
 	return c.deployer
 }
 
-// RepoURL returns the Git repository URL for ArgoCD applications.
+// RepoURL returns the Git repository URL for Argo CD applications.
 func (c *Config) RepoURL() string {
 	return c.repoURL
 }
 
-// TargetRevision returns the target revision for the ArgoCD repo.
+// TargetRevision returns the target revision for the Argo CD repo.
 func (c *Config) TargetRevision() string {
 	return c.targetRevision
 }
@@ -253,6 +264,25 @@ func (c *Config) CertificateIdentityRegexp() string {
 // EstimatedNodeCount returns the estimated number of GPU nodes (0 means unset).
 func (c *Config) EstimatedNodeCount() int {
 	return c.estimatedNodeCount
+}
+
+// DynamicValues returns a deep copy of the dynamic value declarations.
+func (c *Config) DynamicValues() map[string][]string {
+	if c.dynamicValues == nil {
+		return nil
+	}
+	result := make(map[string][]string, len(c.dynamicValues))
+	for component, paths := range c.dynamicValues {
+		pathsCopy := make([]string, len(paths))
+		copy(pathsCopy, paths)
+		result[component] = pathsCopy
+	}
+	return result
+}
+
+// HasDynamicValues returns true if any dynamic value declarations exist.
+func (c *Config) HasDynamicValues() bool {
+	return len(c.dynamicValues) > 0
 }
 
 // Validate checks if the Config has valid settings.
@@ -363,14 +393,14 @@ func WithDeployer(deployer DeployerType) Option {
 	}
 }
 
-// WithRepoURL sets the Git repository URL for ArgoCD applications.
+// WithRepoURL sets the Git repository URL for Argo CD applications.
 func WithRepoURL(repoURL string) Option {
 	return func(c *Config) {
 		c.repoURL = repoURL
 	}
 }
 
-// WithTargetRevision sets the target revision for the ArgoCD repo.
+// WithTargetRevision sets the target revision for the Argo CD repo.
 func WithTargetRevision(targetRevision string) Option {
 	return func(c *Config) {
 		c.targetRevision = targetRevision
@@ -429,6 +459,19 @@ func WithEstimatedNodeCount(n int) Option {
 	}
 }
 
+// WithDynamicValues sets the dynamic value declarations for the bundler.
+// Dynamic values are paths that should be provided at install time rather than bundle time.
+func WithDynamicValues(dynamicValues map[string][]string) Option {
+	return func(c *Config) {
+		if dynamicValues == nil {
+			return
+		}
+		for component, paths := range dynamicValues {
+			c.dynamicValues[component] = append(c.dynamicValues[component], paths...)
+		}
+	}
+}
+
 // NewConfig returns a Config with default values.
 func NewConfig(options ...Option) *Config {
 	c := &Config{
@@ -436,6 +479,7 @@ func NewConfig(options ...Option) *Config {
 		includeChecksums: true,
 		includeReadme:    true,
 		valueOverrides:   make(map[string]map[string]string),
+		dynamicValues:    make(map[string][]string),
 		verbose:          false,
 		version:          "dev",
 	}
@@ -446,41 +490,41 @@ func NewConfig(options ...Option) *Config {
 }
 
 // ParseValueOverrides parses value override strings in format "bundler:path.to.field=value".
-// Returns a map of bundler -> (path -> value).
+// Returns a slice of ComponentPath where every entry has Value != nil.
 // This function is used by both CLI and API handlers to parse --set flags and query parameters.
-func ParseValueOverrides(overrides []string) (map[string]map[string]string, error) {
-	result := make(map[string]map[string]string)
-
+// Pass the result to WithComponentPaths to apply the overrides to a Config.
+func ParseValueOverrides(overrides []string) ([]ComponentPath, error) {
+	result := make([]ComponentPath, 0, len(overrides))
 	for _, override := range overrides {
-		// Split on first ':' to get bundler and path=value
-		parts := strings.SplitN(override, ":", 2)
-		if len(parts) != 2 {
-			return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid format '%s': expected 'bundler:path=value'", override))
+		var cp ComponentPath
+		if err := cp.Parse(override); err != nil {
+			return nil, err
 		}
-
-		bundlerName := parts[0]
-		pathValue := parts[1]
-
-		// Split on first '=' to get path and value
-		kvParts := strings.SplitN(pathValue, "=", 2)
-		if len(kvParts) != 2 {
-			return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid format '%s': expected 'bundler:path=value'", override))
+		if cp.Value == nil {
+			return nil, errors.New(errors.ErrCodeInvalidRequest,
+				fmt.Sprintf("invalid format %q: --set requires 'bundler:path=value'", override))
 		}
-
-		path := kvParts[0]
-		value := kvParts[1]
-
-		if path == "" || value == "" {
-			return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("invalid format '%s': path and value cannot be empty", override))
-		}
-
-		// Initialize bundler map if needed
-		if result[bundlerName] == nil {
-			result[bundlerName] = make(map[string]string)
-		}
-
-		result[bundlerName][path] = value
+		result = append(result, cp)
 	}
+	return result, nil
+}
 
+// ParseDynamicValues parses dynamic value declarations in format "component:path.to.field".
+// Returns a slice of ComponentPath where every entry has Value == nil.
+// This function is used by both CLI and API handlers to parse --dynamic flags.
+// Pass the result to WithComponentPaths to apply the declarations to a Config.
+func ParseDynamicValues(inputs []string) ([]ComponentPath, error) {
+	result := make([]ComponentPath, 0, len(inputs))
+	for _, input := range inputs {
+		var cp ComponentPath
+		if err := cp.Parse(input); err != nil {
+			return nil, err
+		}
+		if cp.Value != nil {
+			return nil, errors.New(errors.ErrCodeInvalidRequest,
+				fmt.Sprintf("invalid format %q: --dynamic does not accept '=value'", input))
+		}
+		result = append(result, cp)
+	}
 	return result, nil
 }

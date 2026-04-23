@@ -15,29 +15,30 @@
 package helm
 
 import (
+	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/NVIDIA/aicr/pkg/bundler/deployer/shared"
+	"gopkg.in/yaml.v3"
+
+	"github.com/NVIDIA/aicr/pkg/bundler/deployer"
+	"github.com/NVIDIA/aicr/pkg/component"
 	"github.com/NVIDIA/aicr/pkg/recipe"
 )
 
-func TestNewGenerator(t *testing.T) {
-	g := NewGenerator()
-	if g == nil {
-		t.Fatal("NewGenerator returned nil")
-	}
-}
+// testDriverVersion is a test constant for driver version strings to satisfy goconst.
+const testDriverVersion = "570.86.16"
 
 func TestGenerate_Success(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: createTestRecipeResult(),
 		ComponentValues: map[string]map[string]any{
 			"cert-manager": {
@@ -52,7 +53,7 @@ func TestGenerate_Success(t *testing.T) {
 		Version: "v1.0.0",
 	}
 
-	output, err := g.Generate(ctx, input, outputDir)
+	output, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -108,53 +109,40 @@ func TestGenerate_Success(t *testing.T) {
 	}
 }
 
-func TestGenerate_NilInput(t *testing.T) {
-	g := NewGenerator()
-	ctx := context.Background()
-
-	_, err := g.Generate(ctx, nil, t.TempDir())
-	if err == nil {
-		t.Error("expected error for nil input")
-	}
-}
-
 func TestGenerate_NilRecipeResult(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: nil,
 	}
 
-	_, err := g.Generate(ctx, input, t.TempDir())
+	_, err := g.Generate(ctx, t.TempDir())
 	if err == nil {
 		t.Error("expected error for nil recipe result")
 	}
 }
 
 func TestGenerate_ContextCancellation(t *testing.T) {
-	g := NewGenerator()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult:    createEmptyRecipeResult(),
 		ComponentValues: map[string]map[string]any{},
 		Version:         "v1.0.0",
 	}
 
-	_, err := g.Generate(ctx, input, t.TempDir())
+	_, err := g.Generate(ctx, t.TempDir())
 	if err == nil {
 		t.Error("expected error for cancelled context")
 	}
 }
 
 func TestGenerate_WithChecksums(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: createTestRecipeResult(),
 		ComponentValues: map[string]map[string]any{
 			"cert-manager": {"crds": map[string]any{"enabled": true}},
@@ -164,7 +152,7 @@ func TestGenerate_WithChecksums(t *testing.T) {
 		IncludeChecksums: true,
 	}
 
-	output, err := g.Generate(ctx, input, outputDir)
+	output, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -216,13 +204,12 @@ func TestGenerate_WithChecksums(t *testing.T) {
 }
 
 func TestGenerate_WithManifests(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
 	manifestContent := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  namespace: {{ .Release.Namespace }}\n  labels:\n    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}\n"
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: createTestRecipeResult(),
 		ComponentValues: map[string]map[string]any{
 			"cert-manager": {},
@@ -236,7 +223,7 @@ func TestGenerate_WithManifests(t *testing.T) {
 		},
 	}
 
-	_, err := g.Generate(ctx, input, outputDir)
+	_, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -291,14 +278,13 @@ func TestHasYAMLObjects(t *testing.T) {
 }
 
 func TestGenerate_EmptyManifestsSkipped(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
 	// Template that renders to empty when enabled=false
 	emptyTemplate := "# Comment\n{{- $cust := index .Values \"gpu-operator\" }}\n{{- if ne (toString (index $cust \"enabled\")) \"false\" }}\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\n{{- end }}\n"
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: createTestRecipeResult(),
 		ComponentValues: map[string]map[string]any{
 			"cert-manager": {},
@@ -312,7 +298,7 @@ func TestGenerate_EmptyManifestsSkipped(t *testing.T) {
 		},
 	}
 
-	output, err := g.Generate(ctx, input, outputDir)
+	output, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -343,11 +329,10 @@ func TestGenerate_EmptyManifestsSkipped(t *testing.T) {
 }
 
 func TestGenerate_DeployScriptExecutable(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: createTestRecipeResult(),
 		ComponentValues: map[string]map[string]any{
 			"cert-manager": {},
@@ -356,7 +341,7 @@ func TestGenerate_DeployScriptExecutable(t *testing.T) {
 		Version: "v1.0.0",
 	}
 
-	_, err := g.Generate(ctx, input, outputDir)
+	_, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -410,12 +395,72 @@ func TestGenerate_DeployScriptExecutable(t *testing.T) {
 	}
 }
 
-func TestGenerate_DeployScriptKaiSchedulerTimeout(t *testing.T) {
-	g := NewGenerator()
+func TestGenerate_DeployScriptFinalReadinessNote(t *testing.T) {
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
-	input := &GeneratorInput{
+	g := &Generator{
+		RecipeResult: createTestRecipeResult(),
+		ComponentValues: map[string]map[string]any{
+			"cert-manager": {},
+			"gpu-operator": {},
+		},
+		Version: "v1.0.0",
+	}
+
+	if _, err := g.Generate(ctx, outputDir); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(outputDir, "deploy.sh"))
+	if err != nil {
+		t.Fatalf("failed to read deploy.sh: %v", err)
+	}
+	script := string(content)
+
+	// The success-path status line must still be present — existing CI log
+	// matchers rely on it for full-success runs.
+	if !strings.Contains(script, `echo "Deployment complete."`) {
+		t.Error(`deploy.sh missing "Deployment complete." line`)
+	}
+	if !strings.Contains(script, `echo "Deployment completed with non-fatal errors (--best-effort)."`) {
+		t.Error(`deploy.sh missing partial-failure status line`)
+	}
+	// The final message must distinguish install completion from workload
+	// readiness so users don't read success as "ready for GPU workloads".
+	wantPhrases := []string{
+		"The above status reflects Helm install and manifest apply results",
+		"not whether the cluster is ready for GPU workloads",
+		"cluster convergence may continue asynchronously",
+		"Skyhook",
+		"GPU operator operand rollout",
+		"DRA kubelet plugin",
+	}
+	for _, p := range wantPhrases {
+		if !strings.Contains(script, p) {
+			t.Errorf("deploy.sh final note missing phrase: %q", p)
+		}
+	}
+	// Both final status lines must precede the shared readiness note.
+	doneIdx := strings.Index(script, `echo "Deployment complete."`)
+	bestEffortIdx := strings.Index(script, `echo "Deployment completed with non-fatal errors (--best-effort)."`)
+	noteIdx := strings.Index(script, "not whether the cluster is ready for GPU workloads")
+	if doneIdx < 0 || bestEffortIdx < 0 || noteIdx < 0 {
+		t.Fatal("unexpected: status line or readiness note missing indices")
+	}
+	if doneIdx >= noteIdx {
+		t.Error(`"Deployment complete." must come before the readiness note`)
+	}
+	if bestEffortIdx >= noteIdx {
+		t.Error(`partial-failure status line must come before the readiness note`)
+	}
+}
+
+func TestGenerate_DeployScriptKaiSchedulerTimeout(t *testing.T) {
+	ctx := context.Background()
+	outputDir := t.TempDir()
+
+	g := &Generator{
 		RecipeResult: &recipe.RecipeResult{
 			Kind:       "RecipeResult",
 			APIVersion: "aicr.nvidia.com/v1alpha1",
@@ -437,7 +482,7 @@ func TestGenerate_DeployScriptKaiSchedulerTimeout(t *testing.T) {
 		Version: "v1.0.0",
 	}
 
-	_, err := g.Generate(ctx, input, outputDir)
+	_, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -456,14 +501,26 @@ func TestGenerate_DeployScriptKaiSchedulerTimeout(t *testing.T) {
 	if !strings.Contains(script, `COMPONENT_HELM_TIMEOUT="${HELM_TIMEOUT}"`) {
 		t.Error("deploy.sh missing default COMPONENT_HELM_TIMEOUT")
 	}
+	// kai-scheduler should use a reduced retry budget to fail faster on slow hooks
+	if !strings.Contains(script, `COMPONENT_MAX_RETRIES="1"`) {
+		t.Error("deploy.sh missing kai-scheduler retry override")
+	}
+	if !strings.Contains(script, `dump_kai_scheduler_helm_diagnostics "${namespace}"`) {
+		t.Error("deploy.sh missing kai-scheduler diagnostics hook")
+	}
+	if !strings.Contains(script, `kubectl get jobs -n "${namespace}"`) {
+		t.Error("deploy.sh missing job diagnostics")
+	}
+	if !strings.Contains(script, `kubectl describe pods -n "${namespace}"`) {
+		t.Error("deploy.sh missing pod diagnostics")
+	}
 }
 
 func TestGenerate_UndeployScriptExecutable(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: createTestRecipeResult(),
 		ComponentValues: map[string]map[string]any{
 			"cert-manager": {},
@@ -472,7 +529,7 @@ func TestGenerate_UndeployScriptExecutable(t *testing.T) {
 		Version: "v1.0.0",
 	}
 
-	_, err := g.Generate(ctx, input, outputDir)
+	_, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -568,6 +625,73 @@ func TestGenerate_UndeployScriptExecutable(t *testing.T) {
 	if !strings.Contains(afterTermWait, "delete_orphaned_webhooks_for_ns") {
 		t.Error("undeploy.sh missing post-namespace-deletion webhook cleanup")
 	}
+
+	// Verify jq is a hard requirement (not a soft check)
+	if strings.Contains(script, "HAS_JQ") {
+		t.Error("undeploy.sh should not use HAS_JQ soft check; jq must be a hard requirement")
+	}
+	if !strings.Contains(script, "command -v jq") {
+		t.Error("undeploy.sh missing jq availability check")
+	}
+
+	// Verify pre-flight check exists and runs before component uninstall
+	preflightIdx := strings.Index(script, "Pre-flight checks")
+	uninstallIdx := strings.Index(script, "Uninstall components in reverse order")
+	if preflightIdx < 0 {
+		t.Fatal("undeploy.sh missing pre-flight checks section")
+	}
+	if uninstallIdx < 0 {
+		t.Fatal("undeploy.sh missing component uninstall section")
+	}
+	if preflightIdx > uninstallIdx {
+		t.Error("undeploy.sh pre-flight checks must run before component uninstall")
+	}
+
+	// Verify pre-flight uses functions and exits on failure
+	preflightSection := script[preflightIdx:uninstallIdx]
+	if !strings.Contains(preflightSection, "check_release_for_stuck_crds") {
+		t.Error("undeploy.sh pre-flight should call check_release_for_stuck_crds")
+	}
+	if !strings.Contains(preflightSection, "PREFLIGHT_DETAILS") || !strings.Contains(preflightSection, "exit 1") {
+		t.Error("undeploy.sh pre-flight should detect stuck CRs and exit on failure")
+	}
+
+	// Verify pre-flight checks each Helm component with both release name and namespace args
+	if !strings.Contains(preflightSection, `check_release_for_stuck_crds "gpu-operator" "gpu-operator"`) {
+		t.Error("undeploy.sh pre-flight missing check for gpu-operator with namespace")
+	}
+	if !strings.Contains(preflightSection, `check_release_for_stuck_crds "cert-manager" "cert-manager"`) {
+		t.Error("undeploy.sh pre-flight missing check for cert-manager with namespace")
+	}
+
+	// Verify helper functions exist and use helm get manifest
+	if !strings.Contains(script, "check_crd_for_stuck_resources()") {
+		t.Error("undeploy.sh missing check_crd_for_stuck_resources function")
+	}
+	if !strings.Contains(script, "check_release_for_stuck_crds()") {
+		t.Error("undeploy.sh missing check_release_for_stuck_crds function")
+	}
+	if !strings.Contains(script, "helm get manifest") {
+		t.Error("undeploy.sh should use helm get manifest for CRD discovery")
+	}
+
+	// Verify stuck CRD handling warns instead of force-clearing
+	if strings.Contains(script, "Force-clearing finalizers on stuck CRD") {
+		t.Error("undeploy.sh should warn about stuck CRDs, not silently force-clear finalizers")
+	}
+	if !strings.Contains(script, "CRDs stuck in deleting state") {
+		t.Error("undeploy.sh missing warning about stuck CRDs")
+	}
+
+	// Verify API-group discovery is not reused for destructive cleanup.
+	// Without bundle-specific ownership metadata, deleting CRDs by group can
+	// remove another tenant's CRD on a shared cluster.
+	if strings.Contains(script, "ORPHANED_CRD_GROUPS=") {
+		t.Error("undeploy.sh should not build group-based CRD delete lists")
+	}
+	if strings.Contains(script, `grep "\.${group}$"`) {
+		t.Error("undeploy.sh should not match CRDs by API group for destructive cleanup or post-flight stale warnings")
+	}
 }
 
 func TestUniqueNamespaces(t *testing.T) {
@@ -636,7 +760,7 @@ func TestNormalizeVersionWithDefault(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := shared.NormalizeVersionWithDefault(tt.input)
+			result := deployer.NormalizeVersionWithDefault(tt.input)
 			if result != tt.expected {
 				t.Errorf("NormalizeVersionWithDefault(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
@@ -655,7 +779,7 @@ func TestSortComponentNamesByDeploymentOrder(t *testing.T) {
 		components := []string{gpuOperator, certManager, networkOperator}
 		deploymentOrder := []string{certManager, gpuOperator, networkOperator}
 
-		sorted := shared.SortComponentNamesByDeploymentOrder(components, deploymentOrder)
+		sorted := deployer.SortComponentNamesByDeploymentOrder(components, deploymentOrder)
 
 		if sorted[0] != certManager {
 			t.Errorf("expected first %s, got %s", certManager, sorted[0])
@@ -674,7 +798,7 @@ func TestSortComponentNamesByDeploymentOrder(t *testing.T) {
 		components := []string{"alpha", gpuOperator}
 		deploymentOrder := []string{gpuOperator}
 
-		sorted := shared.SortComponentNamesByDeploymentOrder(components, deploymentOrder)
+		sorted := deployer.SortComponentNamesByDeploymentOrder(components, deploymentOrder)
 		if sorted[0] != gpuOperator {
 			t.Errorf("expected ordered component first, got %s", sorted[0])
 		}
@@ -687,7 +811,7 @@ func TestSortComponentNamesByDeploymentOrder(t *testing.T) {
 		components := []string{certManager, "zebra"}
 		deploymentOrder := []string{certManager}
 
-		sorted := shared.SortComponentNamesByDeploymentOrder(components, deploymentOrder)
+		sorted := deployer.SortComponentNamesByDeploymentOrder(components, deploymentOrder)
 		if sorted[0] != certManager {
 			t.Errorf("expected ordered component first, got %s", sorted[0])
 		}
@@ -698,7 +822,7 @@ func TestSortComponentNamesByDeploymentOrder(t *testing.T) {
 		components := []string{"zebra", "alpha"}
 		deploymentOrder := []string{gpuOperator}
 
-		sorted := shared.SortComponentNamesByDeploymentOrder(components, deploymentOrder)
+		sorted := deployer.SortComponentNamesByDeploymentOrder(components, deploymentOrder)
 		if sorted[0] != "alpha" {
 			t.Errorf("expected alphabetical first, got %s", sorted[0])
 		}
@@ -709,7 +833,7 @@ func TestSortComponentNamesByDeploymentOrder(t *testing.T) {
 
 	t.Run("empty deployment order", func(t *testing.T) {
 		components := []string{"b", "a"}
-		sorted := shared.SortComponentNamesByDeploymentOrder(components, nil)
+		sorted := deployer.SortComponentNamesByDeploymentOrder(components, nil)
 		if sorted[0] != "b" {
 			t.Errorf("expected original order preserved with empty order, got %s", sorted[0])
 		}
@@ -735,9 +859,9 @@ func TestIsSafePathComponent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := shared.IsSafePathComponent(tt.input)
+			result := deployer.IsSafePathComponent(tt.input)
 			if result != tt.expected {
-				t.Errorf("shared.IsSafePathComponent(%q) = %v, want %v", tt.input, result, tt.expected)
+				t.Errorf("deployer.IsSafePathComponent(%q) = %v, want %v", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -763,21 +887,20 @@ func TestSafeJoin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := shared.SafeJoin(tt.dir, tt.input)
+			result, err := deployer.SafeJoin(tt.dir, tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("shared.SafeJoin(%q, %q) error = %v, wantErr %v", tt.dir, tt.input, err, tt.wantErr)
+				t.Errorf("deployer.SafeJoin(%q, %q) error = %v, wantErr %v", tt.dir, tt.input, err, tt.wantErr)
 				return
 			}
 			if err == nil && result == "" {
-				t.Errorf("shared.SafeJoin(%q, %q) returned empty path", tt.dir, tt.input)
+				t.Errorf("deployer.SafeJoin(%q, %q) returned empty path", tt.dir, tt.input)
 			}
 		})
 	}
 }
 
 func TestBuildComponentDataListRejectsUnsafeNames(t *testing.T) {
-	g := NewGenerator()
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: &recipe.RecipeResult{
 			ComponentRefs: []recipe.ComponentRef{
 				{Name: "../etc/passwd", Version: "v1.0.0", Source: "https://evil.com"},
@@ -785,7 +908,7 @@ func TestBuildComponentDataListRejectsUnsafeNames(t *testing.T) {
 		},
 	}
 
-	_, err := g.buildComponentDataList(input)
+	_, err := g.buildComponentDataList()
 	if err == nil {
 		t.Error("expected error for unsafe component name, got nil")
 	}
@@ -798,8 +921,7 @@ func TestBuildComponentDataList_NamespaceAndChart(t *testing.T) {
 		unknown = "unknown"
 	)
 
-	g := NewGenerator()
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: &recipe.RecipeResult{
 			ComponentRefs: []recipe.ComponentRef{
 				{Name: gpuOp, Namespace: gpuOp, Chart: gpuOp, Version: "v1.0.0", Source: "https://example.com"},
@@ -809,7 +931,7 @@ func TestBuildComponentDataList_NamespaceAndChart(t *testing.T) {
 		},
 	}
 
-	components, err := g.buildComponentDataList(input)
+	components, err := g.buildComponentDataList()
 	if err != nil {
 		t.Fatalf("buildComponentDataList failed: %v", err)
 	}
@@ -839,11 +961,10 @@ func TestBuildComponentDataList_NamespaceAndChart(t *testing.T) {
 }
 
 func TestGenerate_KustomizeOnly(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: createKustomizeRecipeResult(),
 		ComponentValues: map[string]map[string]any{
 			"my-kustomize-app": {},
@@ -851,7 +972,7 @@ func TestGenerate_KustomizeOnly(t *testing.T) {
 		Version: "v1.0.0",
 	}
 
-	output, err := g.Generate(ctx, input, outputDir)
+	output, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -926,11 +1047,10 @@ func TestGenerate_KustomizeOnly(t *testing.T) {
 }
 
 func TestGenerate_MixedHelmAndKustomize(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: createMixedRecipeResult(),
 		ComponentValues: map[string]map[string]any{
 			"cert-manager":     {"crds": map[string]any{"enabled": true}},
@@ -939,7 +1059,7 @@ func TestGenerate_MixedHelmAndKustomize(t *testing.T) {
 		Version: "v1.0.0",
 	}
 
-	output, err := g.Generate(ctx, input, outputDir)
+	output, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -999,9 +1119,7 @@ func TestGenerate_MixedHelmAndKustomize(t *testing.T) {
 }
 
 func TestBuildComponentDataList_Kustomize(t *testing.T) {
-	g := NewGenerator()
-
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: &recipe.RecipeResult{
 			ComponentRefs: []recipe.ComponentRef{
 				{
@@ -1016,7 +1134,7 @@ func TestBuildComponentDataList_Kustomize(t *testing.T) {
 		},
 	}
 
-	components, err := g.buildComponentDataList(input)
+	components, err := g.buildComponentDataList()
 	if err != nil {
 		t.Fatalf("buildComponentDataList failed: %v", err)
 	}
@@ -1044,9 +1162,7 @@ func TestBuildComponentDataList_Kustomize(t *testing.T) {
 }
 
 func TestBuildComponentDataList_MixedTypes(t *testing.T) {
-	g := NewGenerator()
-
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: &recipe.RecipeResult{
 			ComponentRefs: []recipe.ComponentRef{
 				{
@@ -1069,7 +1185,7 @@ func TestBuildComponentDataList_MixedTypes(t *testing.T) {
 		},
 	}
 
-	components, err := g.buildComponentDataList(input)
+	components, err := g.buildComponentDataList()
 	if err != nil {
 		t.Fatalf("buildComponentDataList failed: %v", err)
 	}
@@ -1222,10 +1338,9 @@ func createEmptyRecipeResult() *recipe.RecipeResult {
 // TestGenerate_Reproducible verifies that Helm bundle generation is deterministic.
 // Running Generate() twice with the same input should produce identical output files.
 func TestGenerate_Reproducible(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: createTestRecipeResult(),
 		ComponentValues: map[string]map[string]any{
 			"cert-manager": {
@@ -1246,7 +1361,7 @@ func TestGenerate_Reproducible(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		outputDir := t.TempDir()
 
-		_, err := g.Generate(ctx, input, outputDir)
+		_, err := g.Generate(ctx, outputDir)
 		if err != nil {
 			t.Fatalf("iteration %d: Generate() error = %v", i, err)
 		}
@@ -1299,11 +1414,10 @@ func TestGenerate_Reproducible(t *testing.T) {
 
 // TestGenerate_NoTimestampInOutput verifies that generated files don't contain timestamps.
 func TestGenerate_NoTimestampInOutput(t *testing.T) {
-	g := NewGenerator()
 	ctx := context.Background()
 	outputDir := t.TempDir()
 
-	input := &GeneratorInput{
+	g := &Generator{
 		RecipeResult: createTestRecipeResult(),
 		ComponentValues: map[string]map[string]any{
 			"cert-manager": {},
@@ -1312,7 +1426,7 @@ func TestGenerate_NoTimestampInOutput(t *testing.T) {
 		Version: "v1.0.0",
 	}
 
-	_, err := g.Generate(ctx, input, outputDir)
+	_, err := g.Generate(ctx, outputDir)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -1395,7 +1509,6 @@ func TestGenerateDeployScript(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewGenerator()
 			ctx := context.Background()
 			if tt.cancelCtx {
 				var cancel context.CancelFunc
@@ -1408,11 +1521,11 @@ func TestGenerateDeployScript(t *testing.T) {
 				dir = t.TempDir()
 			}
 
-			input := &GeneratorInput{
+			g := &Generator{
 				Version: "v1.0.0",
 			}
 
-			path, size, err := g.generateDeployScript(ctx, input, tt.components, dir)
+			path, size, err := g.generateDeployScript(ctx, tt.components, dir)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -1435,6 +1548,73 @@ func TestGenerateDeployScript(t *testing.T) {
 				t.Errorf("deploy.sh not executable, mode: %o", info.Mode())
 			}
 		})
+	}
+}
+
+func TestGenerateDeployScript_EmptyVersionOmitsFlag(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	components := []ComponentData{
+		{
+			Name:       "gpu-operator",
+			Namespace:  "gpu-operator",
+			Repository: "https://helm.ngc.nvidia.com/nvidia",
+			ChartName:  "gpu-operator",
+			Version:    "", // empty version — should not produce --version flag
+			HasChart:   true,
+		},
+	}
+
+	g := &Generator{Version: "v1.0.0"}
+	path, _, err := g.generateDeployScript(ctx, components, dir)
+	if err != nil {
+		t.Fatalf("generateDeployScript failed: %v", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading deploy.sh: %v", err)
+	}
+
+	script := string(content)
+	if strings.Contains(script, "--version") {
+		t.Errorf("deploy.sh should not contain --version when Version is empty, got:\n%s", script)
+	}
+	if !strings.Contains(script, "helm upgrade --install gpu-operator gpu-operator") {
+		t.Errorf("deploy.sh should contain helm install command for gpu-operator")
+	}
+}
+
+func TestGenerateDeployScript_WithVersionIncludesFlag(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	components := []ComponentData{
+		{
+			Name:       "cert-manager",
+			Namespace:  "cert-manager",
+			Repository: "https://charts.jetstack.io",
+			ChartName:  "cert-manager",
+			Version:    "v1.17.2",
+			HasChart:   true,
+		},
+	}
+
+	g := &Generator{Version: "v1.0.0"}
+	path, _, err := g.generateDeployScript(ctx, components, dir)
+	if err != nil {
+		t.Fatalf("generateDeployScript failed: %v", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading deploy.sh: %v", err)
+	}
+
+	script := string(content)
+	if !strings.Contains(script, "--version v1.17.2") {
+		t.Errorf("deploy.sh should contain --version v1.17.2, got:\n%s", script)
 	}
 }
 
@@ -1489,7 +1669,6 @@ func TestGenerateUndeployScript(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewGenerator()
 			ctx := context.Background()
 			if tt.cancelCtx {
 				var cancel context.CancelFunc
@@ -1502,11 +1681,11 @@ func TestGenerateUndeployScript(t *testing.T) {
 				dir = t.TempDir()
 			}
 
-			input := &GeneratorInput{
+			g := &Generator{
 				Version: "v1.0.0",
 			}
 
-			path, size, err := g.generateUndeployScript(ctx, input, tt.components, dir)
+			path, size, err := g.generateUndeployScript(ctx, tt.components, dir)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -1546,6 +1725,538 @@ func TestGenerateUndeployScript(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGenerate_DynamicValues(t *testing.T) {
+	tests := []struct {
+		name                    string
+		dynamicValues           map[string][]string
+		componentValues         map[string]map[string]any
+		wantClusterValues       bool   // whether cluster-values.yaml should exist for gpu-operator
+		wantClusterContains     string // substring expected in cluster-values.yaml
+		wantValuesLacksPath     string // dot path that should NOT be in values.yaml
+		wantDeployClusterValues bool   // whether deploy.sh should contain cluster-values.yaml for gpu-operator
+	}{
+		{
+			name:          "no dynamic values — cluster-values.yaml still generated (empty)",
+			dynamicValues: nil,
+			componentValues: map[string]map[string]any{
+				"cert-manager": {"crds": map[string]any{"enabled": true}},
+				"gpu-operator": {"driver": map[string]any{"version": testDriverVersion, "enabled": true}},
+			},
+			wantClusterValues:       true,
+			wantDeployClusterValues: true,
+		},
+		{
+			name: "dynamic values present — extracted into cluster-values.yaml",
+			dynamicValues: map[string][]string{
+				"gpu-operator": {"driver.version"},
+			},
+			componentValues: map[string]map[string]any{
+				"cert-manager": {"crds": map[string]any{"enabled": true}},
+				"gpu-operator": {"driver": map[string]any{"version": testDriverVersion, "enabled": true}},
+			},
+			wantClusterValues:       true,
+			wantClusterContains:     "version",
+			wantValuesLacksPath:     "version: \"570.86.16\"",
+			wantDeployClusterValues: true,
+		},
+		{
+			name: "dynamic path not in values",
+			dynamicValues: map[string][]string{
+				"gpu-operator": {"nonexistent.path"},
+			},
+			componentValues: map[string]map[string]any{
+				"cert-manager": {"crds": map[string]any{"enabled": true}},
+				"gpu-operator": {"driver": map[string]any{"enabled": true}},
+			},
+			wantClusterValues:       true,
+			wantClusterContains:     "nonexistent",
+			wantDeployClusterValues: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			outputDir := t.TempDir()
+
+			g := &Generator{
+				RecipeResult:    createTestRecipeResult(),
+				ComponentValues: tt.componentValues,
+				Version:         "v1.0.0",
+				DynamicValues:   tt.dynamicValues,
+			}
+
+			_, err := g.Generate(ctx, outputDir)
+			if err != nil {
+				t.Fatalf("Generate failed: %v", err)
+			}
+
+			clusterValuesPath := filepath.Join(outputDir, "gpu-operator", "cluster-values.yaml")
+			_, statErr := os.Stat(clusterValuesPath)
+			clusterExists := !os.IsNotExist(statErr)
+
+			if clusterExists != tt.wantClusterValues {
+				t.Errorf("cluster-values.yaml exists = %v, want %v", clusterExists, tt.wantClusterValues)
+			}
+
+			if tt.wantClusterContains != "" && clusterExists {
+				content, readErr := os.ReadFile(clusterValuesPath)
+				if readErr != nil {
+					t.Fatalf("failed to read cluster-values.yaml: %v", readErr)
+				}
+				if !strings.Contains(string(content), tt.wantClusterContains) {
+					t.Errorf("cluster-values.yaml missing %q, got:\n%s", tt.wantClusterContains, string(content))
+				}
+			}
+
+			if tt.wantValuesLacksPath != "" {
+				valuesContent, readErr := os.ReadFile(filepath.Join(outputDir, "gpu-operator", "values.yaml"))
+				if readErr != nil {
+					t.Fatalf("failed to read values.yaml: %v", readErr)
+				}
+				if strings.Contains(string(valuesContent), tt.wantValuesLacksPath) {
+					t.Errorf("values.yaml should not contain %q after dynamic split, got:\n%s", tt.wantValuesLacksPath, string(valuesContent))
+				}
+			}
+
+			// cert-manager should also have cluster-values.yaml (all components get one)
+			certClusterPath := filepath.Join(outputDir, "cert-manager", "cluster-values.yaml")
+			if _, certStatErr := os.Stat(certClusterPath); os.IsNotExist(certStatErr) {
+				t.Error("cert-manager should have cluster-values.yaml (all components get one)")
+			}
+
+			// Verify deploy.sh content — all components always reference cluster-values.yaml
+			deployContent, readErr := os.ReadFile(filepath.Join(outputDir, "deploy.sh"))
+			if readErr != nil {
+				t.Fatalf("failed to read deploy.sh: %v", readErr)
+			}
+			deployScript := string(deployContent)
+
+			gpuClusterRef := `gpu-operator/cluster-values.yaml`
+			if tt.wantDeployClusterValues {
+				if !strings.Contains(deployScript, gpuClusterRef) {
+					t.Error("deploy.sh should contain cluster-values.yaml reference for gpu-operator")
+				}
+			}
+
+			// All components always have cluster-values.yaml in deploy.sh
+			certClusterRef := `cert-manager/cluster-values.yaml`
+			if !strings.Contains(deployScript, certClusterRef) {
+				t.Error("deploy.sh should contain cluster-values.yaml reference for all components")
+			}
+		})
+	}
+}
+
+func TestGenerate_DynamicValuesContentVerification(t *testing.T) {
+	ctx := context.Background()
+	outputDir := t.TempDir()
+
+	g := &Generator{
+		RecipeResult: createTestRecipeResult(),
+		ComponentValues: map[string]map[string]any{
+			"cert-manager": {"crds": map[string]any{"enabled": true}},
+			"gpu-operator": {
+				"driver": map[string]any{
+					"version": testDriverVersion,
+					"enabled": true,
+				},
+				"toolkit": map[string]any{
+					"version": "1.17.4",
+				},
+			},
+		},
+		Version: "v1.0.0",
+		DynamicValues: map[string][]string{
+			"gpu-operator": {"driver.version", "toolkit.version"},
+		},
+	}
+
+	_, err := g.Generate(ctx, outputDir)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Verify cluster-values.yaml has the extracted values
+	clusterContent, err := os.ReadFile(filepath.Join(outputDir, "gpu-operator", "cluster-values.yaml"))
+	if err != nil {
+		t.Fatalf("failed to read cluster-values.yaml: %v", err)
+	}
+	clusterStr := string(clusterContent)
+
+	if !strings.Contains(clusterStr, testDriverVersion) {
+		t.Errorf("cluster-values.yaml missing driver.version value, got:\n%s", clusterStr)
+	}
+	if !strings.Contains(clusterStr, "1.17.4") {
+		t.Errorf("cluster-values.yaml missing toolkit.version value, got:\n%s", clusterStr)
+	}
+
+	// Verify values.yaml no longer has the dynamic values
+	valuesContent, err := os.ReadFile(filepath.Join(outputDir, "gpu-operator", "values.yaml"))
+	if err != nil {
+		t.Fatalf("failed to read values.yaml: %v", err)
+	}
+	valuesStr := string(valuesContent)
+
+	if strings.Contains(valuesStr, testDriverVersion) {
+		t.Errorf("values.yaml should not contain driver version after dynamic split, got:\n%s", valuesStr)
+	}
+	if strings.Contains(valuesStr, "1.17.4") {
+		t.Errorf("values.yaml should not contain toolkit version after dynamic split, got:\n%s", valuesStr)
+	}
+
+	// driver.enabled should still be in values.yaml
+	if !strings.Contains(valuesStr, "enabled") {
+		t.Errorf("values.yaml should still contain driver.enabled, got:\n%s", valuesStr)
+	}
+}
+
+func TestSetNestedValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		value    any
+		wantKeys []string
+	}{
+		{
+			name:     "single level",
+			path:     "version",
+			value:    "1.0.0",
+			wantKeys: []string{"version"},
+		},
+		{
+			name:     "nested path",
+			path:     "driver.version",
+			value:    testDriverVersion,
+			wantKeys: []string{"driver"},
+		},
+		{
+			name:     "deeply nested",
+			path:     "a.b.c",
+			value:    "deep",
+			wantKeys: []string{"a"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := make(map[string]any)
+			component.SetValueByPath(m, tt.path, tt.value)
+
+			for _, key := range tt.wantKeys {
+				if _, ok := m[key]; !ok {
+					t.Errorf("missing key %q in result map", key)
+				}
+			}
+		})
+	}
+
+	// Verify full structure for nested path
+	t.Run("verify nested structure", func(t *testing.T) {
+		m := make(map[string]any)
+		component.SetValueByPath(m, "driver.version", testDriverVersion)
+
+		driver, ok := m["driver"].(map[string]any)
+		if !ok {
+			t.Fatal("driver should be a map")
+		}
+		version, ok := driver["version"]
+		if !ok {
+			t.Fatal("driver.version should exist")
+		}
+		if version != testDriverVersion {
+			t.Errorf("driver.version = %v, want 570.86.16", version)
+		}
+	})
+
+	// Verify multiple paths into same parent
+	t.Run("multiple paths same parent", func(t *testing.T) {
+		m := make(map[string]any)
+		component.SetValueByPath(m, "driver.version", testDriverVersion)
+		component.SetValueByPath(m, "driver.enabled", true)
+
+		driver, ok := m["driver"].(map[string]any)
+		if !ok {
+			t.Fatal("driver should be a map")
+		}
+		if driver["version"] != testDriverVersion {
+			t.Errorf("driver.version = %v, want 570.86.16", driver["version"])
+		}
+		if driver["enabled"] != true {
+			t.Errorf("driver.enabled = %v, want true", driver["enabled"])
+		}
+	})
+}
+
+func TestGenerate_DynamicValuesDeeplyNested(t *testing.T) {
+	ctx := context.Background()
+	outputDir := t.TempDir()
+
+	g := &Generator{
+		RecipeResult: createTestRecipeResult(),
+		ComponentValues: map[string]map[string]any{
+			"cert-manager": {"crds": map[string]any{"enabled": true}},
+			"gpu-operator": {
+				"a": map[string]any{
+					"b": map[string]any{
+						"c": map[string]any{
+							"d": "deep-value",
+						},
+					},
+				},
+				"driver": map[string]any{"enabled": true},
+			},
+		},
+		Version: "v1.0.0",
+		DynamicValues: map[string][]string{
+			"gpu-operator": {"a.b.c.d"},
+		},
+	}
+
+	_, err := g.Generate(ctx, outputDir)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Verify cluster-values.yaml was created with the deeply nested path
+	clusterContent, err := os.ReadFile(filepath.Join(outputDir, "gpu-operator", "cluster-values.yaml"))
+	if err != nil {
+		t.Fatalf("failed to read cluster-values.yaml: %v", err)
+	}
+	clusterStr := string(clusterContent)
+
+	if !strings.Contains(clusterStr, "deep-value") {
+		t.Errorf("cluster-values.yaml missing deeply nested value, got:\n%s", clusterStr)
+	}
+
+	// Parse cluster-values.yaml and verify the YAML structure
+	var clusterMap map[string]any
+	// Strip the header comment and --- separator
+	yamlContent := strings.TrimPrefix(clusterStr, "# Generated by Cloud Native Stack\n---\n")
+	if unmarshalErr := yaml.Unmarshal([]byte(yamlContent), &clusterMap); unmarshalErr != nil {
+		t.Fatalf("failed to parse cluster-values.yaml: %v", unmarshalErr)
+	}
+
+	// Walk the nested path a.b.c.d
+	a, ok := clusterMap["a"].(map[string]any)
+	if !ok {
+		t.Fatal("expected 'a' to be a map in cluster-values.yaml")
+	}
+	b, ok := a["b"].(map[string]any)
+	if !ok {
+		t.Fatal("expected 'a.b' to be a map in cluster-values.yaml")
+	}
+	c, ok := b["c"].(map[string]any)
+	if !ok {
+		t.Fatal("expected 'a.b.c' to be a map in cluster-values.yaml")
+	}
+	d, ok := c["d"]
+	if !ok {
+		t.Fatal("expected 'a.b.c.d' to exist in cluster-values.yaml")
+	}
+	if d != "deep-value" {
+		t.Errorf("a.b.c.d = %v, want 'deep-value'", d)
+	}
+
+	// Verify values.yaml no longer contains the extracted value
+	valuesContent, err := os.ReadFile(filepath.Join(outputDir, "gpu-operator", "values.yaml"))
+	if err != nil {
+		t.Fatalf("failed to read values.yaml: %v", err)
+	}
+	if strings.Contains(string(valuesContent), "deep-value") {
+		t.Errorf("values.yaml should not contain deep-value after dynamic split, got:\n%s", string(valuesContent))
+	}
+
+	// driver.enabled should still be in values.yaml
+	if !strings.Contains(string(valuesContent), "enabled") {
+		t.Errorf("values.yaml should still contain driver.enabled, got:\n%s", string(valuesContent))
+	}
+}
+
+func TestGenerate_DynamicValuesWithSetOverride(t *testing.T) {
+	ctx := context.Background()
+	outputDir := t.TempDir()
+
+	// Simulate --set gpuoperator:driver.version=999.99.99 by providing the value
+	// in ComponentValues (--set is applied before dynamic extraction).
+	// Then --dynamic gpuoperator:driver.version should extract the --set value.
+	g := &Generator{
+		RecipeResult: createTestRecipeResult(),
+		ComponentValues: map[string]map[string]any{
+			"cert-manager": {"crds": map[string]any{"enabled": true}},
+			"gpu-operator": {
+				"driver": map[string]any{
+					"version": "999.99.99",
+					"enabled": true,
+				},
+			},
+		},
+		Version: "v1.0.0",
+		DynamicValues: map[string][]string{
+			"gpu-operator": {"driver.version"},
+		},
+	}
+
+	_, err := g.Generate(ctx, outputDir)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// cluster-values.yaml should contain the --set value
+	clusterContent, err := os.ReadFile(filepath.Join(outputDir, "gpu-operator", "cluster-values.yaml"))
+	if err != nil {
+		t.Fatalf("failed to read cluster-values.yaml: %v", err)
+	}
+	if !strings.Contains(string(clusterContent), "999.99.99") {
+		t.Errorf("cluster-values.yaml should contain --set value 999.99.99, got:\n%s", string(clusterContent))
+	}
+
+	// values.yaml should NOT contain the extracted value
+	valuesContent, err := os.ReadFile(filepath.Join(outputDir, "gpu-operator", "values.yaml"))
+	if err != nil {
+		t.Fatalf("failed to read values.yaml: %v", err)
+	}
+	if strings.Contains(string(valuesContent), "999.99.99") {
+		t.Errorf("values.yaml should not contain 999.99.99 after dynamic split, got:\n%s", string(valuesContent))
+	}
+
+	// driver.enabled should still be in values.yaml
+	if !strings.Contains(string(valuesContent), "enabled") {
+		t.Errorf("values.yaml should still contain driver.enabled, got:\n%s", string(valuesContent))
+	}
+}
+
+func TestGenerate_DynamicValuesRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	outputDir := t.TempDir()
+
+	originalValues := map[string]any{
+		"driver": map[string]any{
+			"version": testDriverVersion,
+			"enabled": true,
+		},
+		"toolkit": map[string]any{
+			"version": "1.17.4",
+			"enabled": true,
+		},
+		"gds": map[string]any{
+			"enabled": false,
+		},
+	}
+
+	g := &Generator{
+		RecipeResult: createTestRecipeResult(),
+		ComponentValues: map[string]map[string]any{
+			"cert-manager": {"crds": map[string]any{"enabled": true}},
+			"gpu-operator": {
+				"driver": map[string]any{
+					"version": testDriverVersion,
+					"enabled": true,
+				},
+				"toolkit": map[string]any{
+					"version": "1.17.4",
+					"enabled": true,
+				},
+				"gds": map[string]any{
+					"enabled": false,
+				},
+			},
+		},
+		Version: "v1.0.0",
+		DynamicValues: map[string][]string{
+			"gpu-operator": {"driver.version", "toolkit.version"},
+		},
+	}
+
+	_, err := g.Generate(ctx, outputDir)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Read and parse values.yaml
+	valuesContent, err := os.ReadFile(filepath.Join(outputDir, "gpu-operator", "values.yaml"))
+	if err != nil {
+		t.Fatalf("failed to read values.yaml: %v", err)
+	}
+	var staticValues map[string]any
+	if unmarshalErr := yaml.Unmarshal(valuesContent, &staticValues); unmarshalErr != nil {
+		t.Fatalf("failed to parse values.yaml: %v", unmarshalErr)
+	}
+
+	// Read and parse cluster-values.yaml
+	clusterContent, err := os.ReadFile(filepath.Join(outputDir, "gpu-operator", "cluster-values.yaml"))
+	if err != nil {
+		t.Fatalf("failed to read cluster-values.yaml: %v", err)
+	}
+	var dynamicValues map[string]any
+	if err := yaml.Unmarshal(clusterContent, &dynamicValues); err != nil {
+		t.Fatalf("failed to parse cluster-values.yaml: %v", err)
+	}
+
+	// Merge static + dynamic values (simulate helm install -f values.yaml -f cluster-values.yaml)
+	merged := deepMerge(staticValues, dynamicValues)
+
+	// Verify the merged result matches the original values
+	// Check driver.version was preserved through the round-trip
+	driverMerged, ok := merged["driver"].(map[string]any)
+	if !ok {
+		t.Fatal("merged result missing 'driver' map")
+	}
+	if driverMerged["version"] != testDriverVersion {
+		t.Errorf("merged driver.version = %v, want 570.86.16", driverMerged["version"])
+	}
+	if driverMerged["enabled"] != true {
+		t.Errorf("merged driver.enabled = %v, want true", driverMerged["enabled"])
+	}
+
+	// Check toolkit.version was preserved
+	toolkitMerged, ok := merged["toolkit"].(map[string]any)
+	if !ok {
+		t.Fatal("merged result missing 'toolkit' map")
+	}
+	if toolkitMerged["version"] != "1.17.4" {
+		t.Errorf("merged toolkit.version = %v, want 1.17.4", toolkitMerged["version"])
+	}
+	if toolkitMerged["enabled"] != true {
+		t.Errorf("merged toolkit.enabled = %v, want true", toolkitMerged["enabled"])
+	}
+
+	// Check gds.enabled was not affected (not a dynamic path)
+	gdsMerged, ok := merged["gds"].(map[string]any)
+	if !ok {
+		t.Fatal("merged result missing 'gds' map")
+	}
+	if gdsMerged["enabled"] != false {
+		t.Errorf("merged gds.enabled = %v, want false", gdsMerged["enabled"])
+	}
+
+	// Verify original values structure is fully recoverable
+	for key := range originalValues {
+		if _, exists := merged[key]; !exists {
+			t.Errorf("merged result missing top-level key %q", key)
+		}
+	}
+}
+
+// deepMerge recursively merges src into dst. src values take precedence.
+// This simulates Helm's behavior of merging multiple -f value files.
+func deepMerge(dst, src map[string]any) map[string]any {
+	result := make(map[string]any)
+	for k, v := range dst {
+		result[k] = v
+	}
+	for k, v := range src {
+		if srcMap, ok := v.(map[string]any); ok {
+			if dstMap, ok := result[k].(map[string]any); ok {
+				result[k] = deepMerge(dstMap, srcMap)
+				continue
+			}
+		}
+		result[k] = v
+	}
+	return result
 }
 
 func TestReverseComponents(t *testing.T) {
@@ -1599,5 +2310,1099 @@ func TestReverseComponents(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestGenerate_DoesNotMutateComponentValues verifies that Generate deep-copies
+// component values before extracting dynamic paths, so the input map is preserved.
+func TestGenerate_DoesNotMutateComponentValues(t *testing.T) {
+	ctx := context.Background()
+	outputDir := t.TempDir()
+
+	originalValues := map[string]map[string]any{
+		"gpu-operator": {
+			"driver": map[string]any{"version": testDriverVersion, "enabled": true},
+		},
+	}
+
+	g := &Generator{
+		RecipeResult:    createTestRecipeResult(),
+		ComponentValues: originalValues,
+		Version:         "test",
+		DynamicValues: map[string][]string{
+			"gpu-operator": {"driver.version"},
+		},
+	}
+
+	_, err := g.Generate(ctx, outputDir)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	// Original values should NOT be mutated — driver.version should still exist
+	driver, ok := originalValues["gpu-operator"]["driver"].(map[string]any)
+	if !ok {
+		t.Fatal("original driver should still be a map")
+	}
+	if _, hasVersion := driver["version"]; !hasVersion {
+		t.Error("original driver.version was mutated (removed) — deep copy is missing")
+	}
+}
+
+func TestGenerate_DataFiles(t *testing.T) {
+	t.Run("valid data file included in output", func(t *testing.T) {
+		ctx := context.Background()
+		outputDir := t.TempDir()
+
+		// Create a data file on disk so checksums can read it
+		dataDir := filepath.Join(outputDir, "data")
+		if err := os.MkdirAll(dataDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dataDir, "overrides.yaml"), []byte("key: value"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		g := &Generator{
+			RecipeResult: createTestRecipeResult(),
+			ComponentValues: map[string]map[string]any{
+				"cert-manager": {},
+				"gpu-operator": {},
+			},
+			Version:   "v1.0.0",
+			DataFiles: []string{"data/overrides.yaml"},
+		}
+
+		output, err := g.Generate(ctx, outputDir)
+		if err != nil {
+			t.Fatalf("Generate() error = %v", err)
+		}
+
+		found := false
+		for _, f := range output.Files {
+			if strings.HasSuffix(f, "data/overrides.yaml") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("data file not included in output.Files")
+		}
+	})
+
+	t.Run("path traversal rejected", func(t *testing.T) {
+		ctx := context.Background()
+		outputDir := t.TempDir()
+
+		g := &Generator{
+			RecipeResult: createTestRecipeResult(),
+			ComponentValues: map[string]map[string]any{
+				"cert-manager": {},
+				"gpu-operator": {},
+			},
+			Version:   "v1.0.0",
+			DataFiles: []string{"../../../etc/passwd"},
+		}
+
+		_, err := g.Generate(ctx, outputDir)
+		if err == nil {
+			t.Fatal("Generate() should reject path traversal in DataFiles")
+		}
+		if !strings.Contains(err.Error(), "escapes base directory") {
+			t.Errorf("expected path-escape error from SafeJoin, got: %v", err)
+		}
+	})
+}
+
+// TestUndeployScript_TransientFailureWarnsAndContinues asserts that the three
+// post-uninstall cleanup pipelines tolerate a transient kubectl failure instead
+// of letting set -euo pipefail kill the script.
+//
+// Sites covered (matching the warn-on-failure pattern added in this PR):
+//   - delete_release_cluster_resources (per-release per-kind cleanup helper)
+//   - force_clear_namespace_finalizers (last-resort namespace unstick helper)
+//   - per-component orphan-CRD cleanup loop in the script body
+//
+// Setup: stub `kubectl` to always exit non-zero (simulating a 502/timeout/auth
+// hiccup). For each site, source the relevant section of the generated script,
+// invoke it, and assert (a) the wrapper exits 0 — proving set -e was not
+// triggered — and (b) the descriptive `Warning:` is on stderr — proving the
+// failure was visible to the operator.
+func TestUndeployScript_TransientFailureWarnsAndContinues(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available; skipping shell-behavior test")
+	}
+	if _, err := exec.LookPath("awk"); err != nil {
+		t.Skip("awk not available; skipping shell-behavior test")
+	}
+	if _, err := exec.LookPath("sed"); err != nil {
+		t.Skip("sed not available; skipping shell-behavior test")
+	}
+
+	ctx := context.Background()
+	outputDir := t.TempDir()
+
+	g := &Generator{
+		RecipeResult: createTestRecipeResult(),
+		ComponentValues: map[string]map[string]any{
+			"cert-manager": {},
+			"gpu-operator": {},
+		},
+		Version: "v1.0.0",
+	}
+	if _, err := g.Generate(ctx, outputDir); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	undeployPath := filepath.Join(outputDir, "undeploy.sh")
+
+	// Stub kubectl: `api-resources` succeeds with a minimal kind list (so the
+	// helpers reach the inner pipeline we want to exercise); every other
+	// invocation fails to simulate a transient API hiccup. Placed at the
+	// front of PATH so it shadows the real kubectl. jq is left alone — the
+	// pipelines pipe-fail at the kubectl stage either way.
+	stubDir := t.TempDir()
+	stubKubectl := filepath.Join(stubDir, "kubectl")
+	stubScript := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"api-resources\" ]; then\n" +
+		"  echo configmaps\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"echo 'simulated transient API failure' >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(stubKubectl, []byte(stubScript), 0o755); err != nil {
+		t.Fatalf("write kubectl stub: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		bashSnippet string
+		wantStderr  string
+	}{
+		{
+			// L97-L103 in template: the helper's outer pipeline must end in `done || echo "Warning: ..." >&2`.
+			// sed+eval (not `source <(awk ...)` process substitution) for portability
+			// across bash environments where <(...) is flaky.
+			name: "delete_release_cluster_resources",
+			bashSnippet: `
+                snippet=$(sed -n '/^delete_release_cluster_resources()/,/^}/p' "$UNDEPLOY")
+                eval "$snippet"
+                HELM_TIMEOUT=10
+                delete_release_cluster_resources "gpu-operator" "gpu-operator"
+            `,
+			wantStderr: "Warning: customresourcedefinitions cleanup pipeline for release gpu-operator/gpu-operator failed",
+		},
+		{
+			// L150-L154 in template: same pattern in the namespace finalizer-unstick helper.
+			name: "force_clear_namespace_finalizers",
+			bashSnippet: `
+                snippet=$(sed -n '/^force_clear_namespace_finalizers()/,/^}/p' "$UNDEPLOY")
+                eval "$snippet"
+                force_clear_namespace_finalizers "gpu-operator"
+            `,
+			wantStderr: "Warning: finalizer-clear pipeline for",
+		},
+		{
+			// L296-L302 in template: the per-Helm-component orphan-CRD loop in the script body.
+			// Extract from the section header through (but not including) the
+			// manual-review note that now replaces the old group-delete block.
+			name: "orphan_crd_inline_loop",
+			bashSnippet: `
+                snippet=$(sed -n '/^# Clean up orphaned CRDs that were owned by this bundle/,/^# Intentionally skip automatic deletion of unannotated CRDs matched only by/p' "$UNDEPLOY" | sed '$d')
+                eval "$snippet"
+            `,
+			wantStderr: "Warning: orphan-CRD cleanup for",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Bound each bash invocation to 30s so a wedged subprocess (kubectl
+			// stub mis-fire, deadlocked pipeline, etc.) cannot hang `go test`.
+			subCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(subCtx, "bash", "-c", "set -euo pipefail\n"+tt.bashSnippet)
+			cmd.Env = append(os.Environ(),
+				"PATH="+stubDir+":"+os.Getenv("PATH"),
+				"UNDEPLOY="+undeployPath,
+			)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+			if err != nil {
+				t.Fatalf("regression: cleanup pipeline killed the script with set -e instead of warning.\nerr: %v\nstdout: %s\nstderr: %s",
+					err, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tt.wantStderr) {
+				t.Errorf("expected %q in stderr (proves operators get a visible signal on transient failure), got:\nstderr: %s",
+					tt.wantStderr, stderr.String())
+			}
+		})
+	}
+}
+
+// TestUndeployScript_PreflightDiscoversExplicitExtraCRDs proves the simplified
+// pre-flight still catches a small set of known crds/-installed operator CRDs
+// without scanning whole API groups. Here helm get manifest is empty and the
+// CRD is unannotated, so only extra_crds_for_release can surface it.
+func TestUndeployScript_PreflightDiscoversExplicitExtraCRDs(t *testing.T) {
+	for _, bin := range []string{"bash", "awk", "sed", "jq"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available; skipping shell-behavior test", bin)
+		}
+	}
+
+	ctx := context.Background()
+	outputDir := t.TempDir()
+	g := &Generator{
+		RecipeResult: createTestRecipeResult(),
+		ComponentValues: map[string]map[string]any{
+			"cert-manager": {},
+			"gpu-operator": {},
+		},
+		Version: "v1.0.0",
+	}
+	if _, err := g.Generate(ctx, outputDir); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	undeployPath := filepath.Join(outputDir, "undeploy.sh")
+
+	stubDir := t.TempDir()
+
+	helmStub := "#!/bin/sh\n# helm get manifest returns empty (no templated CRDs)\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "helm"), []byte(helmStub), 0o755); err != nil {
+		t.Fatalf("write helm stub: %v", err)
+	}
+
+	kubectlStub := `#!/bin/sh
+case "$*" in
+  "get crd -o json")
+    echo '{"items":[{"metadata":{"name":"clusterpolicies.nvidia.com"},"spec":{"group":"nvidia.com","names":{"plural":"clusterpolicies"},"scope":"Cluster"}}]}'
+    ;;
+  "get crd clusterpolicies.nvidia.com -o json")
+    echo '{"spec":{"names":{"plural":"clusterpolicies"},"group":"nvidia.com","scope":"Cluster"}}'
+    ;;
+  "get clusterpolicies.nvidia.com -o json")
+    # One CR with an operator finalizer (non-kubernetes.io/*) — the exact
+    # case pre-flight is supposed to catch before the operator is removed.
+    echo '{"items":[{"metadata":{"name":"cluster-policy","finalizers":["nvidia.com/clusterpolicy"]}}]}'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(stubDir, "kubectl"), []byte(kubectlStub), 0o755); err != nil {
+		t.Fatalf("write kubectl stub: %v", err)
+	}
+
+	bashSnippet := `
+        for fn in extra_crds_for_release capture_kubectl_json check_crd_for_stuck_resources check_release_for_stuck_crds; do
+            snippet=$(sed -n "/^${fn}()/,/^}/p" "$UNDEPLOY")
+            eval "$snippet"
+        done
+        PREFLIGHT_DETAILS=$(mktemp)
+        check_release_for_stuck_crds "gpu-operator" "gpu-operator"
+        cat "$PREFLIGHT_DETAILS"
+        rm -f "$PREFLIGHT_DETAILS"
+    `
+
+	subCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(subCtx, "bash", "-c", "set -euo pipefail\n"+bashSnippet)
+	cmd.Env = append(os.Environ(),
+		"PATH="+stubDir+":"+os.Getenv("PATH"),
+		"UNDEPLOY="+undeployPath,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("script exited non-zero.\nerr: %v\nstdout: %s\nstderr: %s",
+			err, stdout.String(), stderr.String())
+	}
+
+	if !strings.Contains(stdout.String(), "cluster-policy") {
+		t.Errorf("expected pre-flight to detect cluster-policy CR via explicit CRD overrides; got stdout: %q\nstderr: %q",
+			stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "clusterpolicies.nvidia.com") {
+		t.Errorf("expected pre-flight output to name the source CRD clusterpolicies.nvidia.com; got: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "nvidia.com/clusterpolicy") {
+		t.Errorf("expected pre-flight to surface the unreconciled finalizer; got: %q", stdout.String())
+	}
+}
+
+// TestUndeployScript_PreflightDiscoversPrometheusExplicitCRDs proves the
+// expanded exact-name override list now covers kube-prometheus-stack CRDs that
+// are commonly installed outside Helm manifest/annotation discovery.
+func TestUndeployScript_PreflightDiscoversPrometheusExplicitCRDs(t *testing.T) {
+	for _, bin := range []string{"bash", "awk", "sed", "jq"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available; skipping shell-behavior test", bin)
+		}
+	}
+
+	ctx := context.Background()
+	outputDir := t.TempDir()
+	g := &Generator{
+		RecipeResult: &recipe.RecipeResult{
+			Kind:       "RecipeResult",
+			APIVersion: "aicr.nvidia.com/v1alpha1",
+			Metadata: struct {
+				Version            string                     `json:"version,omitempty" yaml:"version,omitempty"`
+				AppliedOverlays    []string                   `json:"appliedOverlays,omitempty" yaml:"appliedOverlays,omitempty"`
+				ExcludedOverlays   []recipe.ExcludedOverlay   `json:"excludedOverlays,omitempty" yaml:"excludedOverlays,omitempty"`
+				ConstraintWarnings []recipe.ConstraintWarning `json:"constraintWarnings,omitempty" yaml:"constraintWarnings,omitempty"`
+			}{
+				Version: "v0.1.0",
+			},
+			ComponentRefs: []recipe.ComponentRef{
+				{
+					Name:      "kube-prometheus-stack",
+					Namespace: "monitoring",
+					Chart:     "prometheus-community/kube-prometheus-stack",
+					Version:   "82.8.0",
+					Source:    "https://prometheus-community.github.io/helm-charts",
+				},
+			},
+			DeploymentOrder: []string{"kube-prometheus-stack"},
+		},
+		ComponentValues: map[string]map[string]any{
+			"kube-prometheus-stack": {},
+		},
+		Version: "v1.0.0",
+	}
+	if _, err := g.Generate(ctx, outputDir); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	undeployPath := filepath.Join(outputDir, "undeploy.sh")
+
+	stubDir := t.TempDir()
+
+	helmStub := "#!/bin/sh\n# helm get manifest returns empty (no templated CRDs)\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "helm"), []byte(helmStub), 0o755); err != nil {
+		t.Fatalf("write helm stub: %v", err)
+	}
+
+	kubectlStub := `#!/bin/sh
+case "$*" in
+  "get crd -o json")
+    echo '{"items":[{"metadata":{"name":"prometheuses.monitoring.coreos.com"},"spec":{"group":"monitoring.coreos.com","names":{"plural":"prometheuses"},"scope":"Namespaced"}}]}'
+    ;;
+  "get crd prometheuses.monitoring.coreos.com -o json")
+    echo '{"spec":{"names":{"plural":"prometheuses"},"group":"monitoring.coreos.com","scope":"Namespaced"}}'
+    ;;
+  "get prometheuses.monitoring.coreos.com -A -o json")
+    echo '{"items":[{"metadata":{"namespace":"monitoring","name":"aicr-prometheus","finalizers":["monitoring.coreos.com/operator"]}}]}'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(stubDir, "kubectl"), []byte(kubectlStub), 0o755); err != nil {
+		t.Fatalf("write kubectl stub: %v", err)
+	}
+
+	bashSnippet := `
+        for fn in extra_crds_for_release capture_kubectl_json check_crd_for_stuck_resources check_release_for_stuck_crds; do
+            snippet=$(sed -n "/^${fn}()/,/^}/p" "$UNDEPLOY")
+            eval "$snippet"
+        done
+        PREFLIGHT_DETAILS=$(mktemp)
+        check_release_for_stuck_crds "kube-prometheus-stack" "monitoring"
+        cat "$PREFLIGHT_DETAILS"
+        rm -f "$PREFLIGHT_DETAILS"
+    `
+
+	subCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(subCtx, "bash", "-c", "set -euo pipefail\n"+bashSnippet)
+	cmd.Env = append(os.Environ(),
+		"PATH="+stubDir+":"+os.Getenv("PATH"),
+		"UNDEPLOY="+undeployPath,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("script exited non-zero.\nerr: %v\nstdout: %s\nstderr: %s",
+			err, stdout.String(), stderr.String())
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "prometheuses.monitoring.coreos.com") {
+		t.Errorf("expected pre-flight output to name the explicit CRD prometheuses.monitoring.coreos.com; got: %q", out)
+	}
+	if !strings.Contains(out, "monitoring/aicr-prometheus") {
+		t.Errorf("expected pre-flight to report the explicit CR instance; got: %q", out)
+	}
+	if !strings.Contains(out, "monitoring.coreos.com/operator") {
+		t.Errorf("expected pre-flight to surface the unreconciled finalizer; got: %q", out)
+	}
+}
+
+// TestUndeployScript_PreflightDiscoversAnnotatedCRDs proves the retained
+// annotation-based discovery still catches release-owned CRDs even when
+// helm get manifest is empty (e.g. chart stores CRDs outside templates/).
+func TestUndeployScript_PreflightDiscoversAnnotatedCRDs(t *testing.T) {
+	for _, bin := range []string{"bash", "awk", "sed", "jq"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available; skipping shell-behavior test", bin)
+		}
+	}
+
+	ctx := context.Background()
+	outputDir := t.TempDir()
+	g := &Generator{
+		RecipeResult: createTestRecipeResult(),
+		ComponentValues: map[string]map[string]any{
+			"cert-manager": {},
+			"gpu-operator": {},
+		},
+		Version: "v1.0.0",
+	}
+	if _, err := g.Generate(ctx, outputDir); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	undeployPath := filepath.Join(outputDir, "undeploy.sh")
+
+	stubDir := t.TempDir()
+
+	helmStub := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "helm"), []byte(helmStub), 0o755); err != nil {
+		t.Fatalf("write helm stub: %v", err)
+	}
+
+	kubectlStub := `#!/bin/sh
+case "$*" in
+  "get crd -o json")
+    echo '{"items":[{"metadata":{"name":"challenges.acme.cert-manager.io","annotations":{"meta.helm.sh/release-name":"cert-manager","meta.helm.sh/release-namespace":"cert-manager"}},"spec":{"group":"acme.cert-manager.io","names":{"plural":"challenges"},"scope":"Namespaced"}}]}'
+    ;;
+  "get crd challenges.acme.cert-manager.io -o json")
+    echo '{"spec":{"names":{"plural":"challenges"},"group":"acme.cert-manager.io","scope":"Namespaced"}}'
+    ;;
+  "get challenges.acme.cert-manager.io -A -o json")
+    echo '{"items":[{"metadata":{"namespace":"cert-manager","name":"test-challenge","finalizers":["acme.cert-manager.io/finalizer"]}}]}'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(stubDir, "kubectl"), []byte(kubectlStub), 0o755); err != nil {
+		t.Fatalf("write kubectl stub: %v", err)
+	}
+
+	bashSnippet := `
+        for fn in extra_crds_for_release capture_kubectl_json check_crd_for_stuck_resources check_release_for_stuck_crds; do
+            snippet=$(sed -n "/^${fn}()/,/^}/p" "$UNDEPLOY")
+            eval "$snippet"
+        done
+        PREFLIGHT_DETAILS=$(mktemp)
+        check_release_for_stuck_crds "cert-manager" "cert-manager"
+        cat "$PREFLIGHT_DETAILS"
+        rm -f "$PREFLIGHT_DETAILS"
+    `
+
+	subCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(subCtx, "bash", "-c", "set -euo pipefail\n"+bashSnippet)
+	cmd.Env = append(os.Environ(),
+		"PATH="+stubDir+":"+os.Getenv("PATH"),
+		"UNDEPLOY="+undeployPath,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("script exited non-zero.\nerr: %v\nstdout: %s\nstderr: %s",
+			err, stdout.String(), stderr.String())
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "challenges.acme.cert-manager.io") {
+		t.Errorf("expected pre-flight output to name the annotated CRD challenges.acme.cert-manager.io; got: %q", out)
+	}
+	if !strings.Contains(out, "cert-manager/test-challenge") {
+		t.Errorf("expected pre-flight to report the annotated CR instance; got: %q", out)
+	}
+	if !strings.Contains(out, "acme.cert-manager.io/finalizer") {
+		t.Errorf("expected pre-flight to surface the unreconciled finalizer; got: %q", out)
+	}
+}
+
+// TestUndeployScript_PreflightSkipListCoversManifestDeletedReleases keeps the
+// simplified fix explicit: releases whose bundle-managed CRs are deleted from
+// manifests before controller uninstall are skipped at pre-flight instead of
+// reintroducing manifest parsing and ownership inference.
+func TestUndeployScript_PreflightSkipListCoversManifestDeletedReleases(t *testing.T) {
+	for _, bin := range []string{"bash", "sed"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available; skipping shell-behavior test", bin)
+		}
+	}
+
+	ctx := context.Background()
+	outputDir := t.TempDir()
+	g := &Generator{
+		RecipeResult: &recipe.RecipeResult{
+			Kind:       "RecipeResult",
+			APIVersion: "aicr.nvidia.com/v1alpha1",
+			Metadata: struct {
+				Version            string                     `json:"version,omitempty" yaml:"version,omitempty"`
+				AppliedOverlays    []string                   `json:"appliedOverlays,omitempty" yaml:"appliedOverlays,omitempty"`
+				ExcludedOverlays   []recipe.ExcludedOverlay   `json:"excludedOverlays,omitempty" yaml:"excludedOverlays,omitempty"`
+				ConstraintWarnings []recipe.ConstraintWarning `json:"constraintWarnings,omitempty" yaml:"constraintWarnings,omitempty"`
+			}{
+				Version: "v0.1.0",
+			},
+			ComponentRefs: []recipe.ComponentRef{
+				{
+					Name:      "cert-manager",
+					Namespace: "cert-manager",
+					Chart:     "cert-manager",
+					Version:   "v1.17.2",
+					Source:    "https://charts.jetstack.io",
+				},
+				{
+					Name:      "kgateway",
+					Namespace: "kgateway-system",
+					Chart:     "kgateway",
+					Version:   "v0.1.0",
+					Source:    "https://example.invalid/charts",
+				},
+				{
+					Name:      "skyhook-operator",
+					Namespace: "skyhook",
+					Chart:     "skyhook-operator",
+					Version:   "v0.1.0",
+					Source:    "https://example.invalid/charts",
+				},
+			},
+			DeploymentOrder: []string{"cert-manager", "kgateway", "skyhook-operator"},
+		},
+		ComponentValues: map[string]map[string]any{
+			"cert-manager":     {},
+			"kgateway":         {},
+			"skyhook-operator": {},
+		},
+		Version: "v1.0.0",
+	}
+	if _, err := g.Generate(ctx, outputDir); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	undeployPath := filepath.Join(outputDir, "undeploy.sh")
+
+	bashSnippet := `
+        snippet=$(sed -n '/^skip_preflight_for_release()/,/^}/p' "$UNDEPLOY")
+        eval "$snippet"
+        skip_preflight_for_release "skyhook-operator" && echo "skip:skyhook-operator"
+        skip_preflight_for_release "kgateway" && echo "skip:kgateway"
+        if skip_preflight_for_release "cert-manager"; then
+            echo "unexpected:cert-manager"
+            exit 1
+        fi
+        echo "check:cert-manager"
+    `
+
+	subCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(subCtx, "bash", "-c", "set -euo pipefail\n"+bashSnippet)
+	cmd.Env = append(os.Environ(), "UNDEPLOY="+undeployPath)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("script exited non-zero.\nerr: %v\nstdout: %s\nstderr: %s",
+			err, stdout.String(), stderr.String())
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "skip:skyhook-operator") {
+		t.Errorf("expected skip list to include skyhook-operator; stdout: %q stderr: %q", out, stderr.String())
+	}
+	if !strings.Contains(out, "skip:kgateway") {
+		t.Errorf("expected skip list to include kgateway; stdout: %q stderr: %q", out, stderr.String())
+	}
+	if !strings.Contains(out, "check:cert-manager") {
+		t.Errorf("expected cert-manager to remain pre-flight checked; stdout: %q stderr: %q", out, stderr.String())
+	}
+}
+
+// TestUndeployScript_PreflightSkipsForeignAnnotatedExtraCRDs preserves the
+// shared-cluster safety property for explicit CRD overrides: if a known CRD
+// name is clearly annotated to a different Helm release, pre-flight must not
+// scan its CRs for this release.
+func TestUndeployScript_PreflightSkipsForeignAnnotatedExtraCRDs(t *testing.T) {
+	for _, bin := range []string{"bash", "awk", "sed", "jq"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available; skipping shell-behavior test", bin)
+		}
+	}
+
+	ctx := context.Background()
+	outputDir := t.TempDir()
+	g := &Generator{
+		RecipeResult: createTestRecipeResult(),
+		ComponentValues: map[string]map[string]any{
+			"cert-manager": {},
+			"gpu-operator": {},
+		},
+		Version: "v1.0.0",
+	}
+	if _, err := g.Generate(ctx, outputDir); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	undeployPath := filepath.Join(outputDir, "undeploy.sh")
+
+	stubDir := t.TempDir()
+
+	helmStub := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "helm"), []byte(helmStub), 0o755); err != nil {
+		t.Fatalf("write helm stub: %v", err)
+	}
+
+	kubectlStub := `#!/bin/sh
+case "$*" in
+  "get crd -o json")
+    echo '{"items":[{"metadata":{"name":"clusterpolicies.nvidia.com","annotations":{"meta.helm.sh/release-name":"other-release","meta.helm.sh/release-namespace":"other-ns"}},"spec":{"group":"nvidia.com","names":{"plural":"clusterpolicies"},"scope":"Cluster"}}]}'
+    ;;
+  "get crd clusterpolicies.nvidia.com -o json")
+    echo '{"spec":{"names":{"plural":"clusterpolicies"},"group":"nvidia.com","scope":"Cluster"}}'
+    ;;
+  "get clusterpolicies.nvidia.com -o json")
+    echo '{"items":[{"metadata":{"name":"foreign-policy","finalizers":["nvidia.com/clusterpolicy"]}}]}'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(stubDir, "kubectl"), []byte(kubectlStub), 0o755); err != nil {
+		t.Fatalf("write kubectl stub: %v", err)
+	}
+
+	bashSnippet := `
+        for fn in extra_crds_for_release capture_kubectl_json check_crd_for_stuck_resources check_release_for_stuck_crds; do
+            snippet=$(sed -n "/^${fn}()/,/^}/p" "$UNDEPLOY")
+            eval "$snippet"
+        done
+        PREFLIGHT_DETAILS=$(mktemp)
+        check_release_for_stuck_crds "gpu-operator" "gpu-operator"
+        cat "$PREFLIGHT_DETAILS"
+        rm -f "$PREFLIGHT_DETAILS"
+    `
+
+	subCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(subCtx, "bash", "-c", "set -euo pipefail\n"+bashSnippet)
+	cmd.Env = append(os.Environ(),
+		"PATH="+stubDir+":"+os.Getenv("PATH"),
+		"UNDEPLOY="+undeployPath,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("script exited non-zero.\nerr: %v\nstdout: %s\nstderr: %s",
+			err, stdout.String(), stderr.String())
+	}
+
+	out := stdout.String()
+	leaked := strings.Contains(out, "clusterpolicies.nvidia.com") ||
+		strings.Contains(out, "foreign-policy") ||
+		strings.Contains(out, "nvidia.com/clusterpolicy")
+	if leaked {
+		t.Errorf("pre-flight scanned an explicit override CRD annotated to a different Helm release.\nstdout: %q\nstderr: %q",
+			out, stderr.String())
+	}
+}
+
+// TestUndeployScript_PreflightFailsClosedOnKubectlError asserts that a
+// transient `kubectl get crd` failure (API 502, auth hiccup, etc.) causes
+// pre-flight to fail closed with a clear error message — NOT silently treat
+// "API error" as "no CRDs to check" and proceed to uninstall the operator.
+func TestUndeployScript_PreflightFailsClosedOnKubectlError(t *testing.T) {
+	for _, bin := range []string{"bash", "awk", "sed", "jq"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available; skipping shell-behavior test", bin)
+		}
+	}
+
+	ctx := context.Background()
+	outputDir := t.TempDir()
+	g := &Generator{
+		RecipeResult: createTestRecipeResult(),
+		ComponentValues: map[string]map[string]any{
+			"cert-manager": {},
+			"gpu-operator": {},
+		},
+		Version: "v1.0.0",
+	}
+	if _, err := g.Generate(ctx, outputDir); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	undeployPath := filepath.Join(outputDir, "undeploy.sh")
+
+	stubDir := t.TempDir()
+
+	helmStub := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "helm"), []byte(helmStub), 0o755); err != nil {
+		t.Fatalf("write helm stub: %v", err)
+	}
+
+	// Simulate a transient API failure on the CRD list call that both retained
+	// discovery sources depend on. Before the fail-closed fix, this could
+	// silently return "" and let pre-flight fast-path to success.
+	kubectlStub := `#!/bin/sh
+case "$*" in
+  "get crd -o json")
+    echo "error: the server is currently unable to handle the request (get customresourcedefinitions.apiextensions.k8s.io)" >&2
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(stubDir, "kubectl"), []byte(kubectlStub), 0o755); err != nil {
+		t.Fatalf("write kubectl stub: %v", err)
+	}
+
+	bashSnippet := `
+        for fn in extra_crds_for_release capture_kubectl_json check_crd_for_stuck_resources check_release_for_stuck_crds; do
+            snippet=$(sed -n "/^${fn}()/,/^}/p" "$UNDEPLOY")
+            eval "$snippet"
+        done
+        PREFLIGHT_DETAILS=$(mktemp)
+        check_release_for_stuck_crds "gpu-operator" "gpu-operator"
+        echo "UNREACHABLE: fast-path silently passed despite API error" >&2
+        rm -f "$PREFLIGHT_DETAILS"
+    `
+
+	subCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(subCtx, "bash", "-c", "set -euo pipefail\n"+bashSnippet)
+	cmd.Env = append(os.Environ(),
+		"PATH="+stubDir+":"+os.Getenv("PATH"),
+		"UNDEPLOY="+undeployPath,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	if err == nil {
+		t.Fatalf("regression: check_release_for_stuck_crds returned 0 despite kubectl error — pre-flight would silently pass on transient API failure.\nstdout: %q\nstderr: %q",
+			stdout.String(), stderr.String())
+	}
+	if strings.Contains(stderr.String(), "UNREACHABLE") {
+		t.Fatalf("regression: execution continued past check_release_for_stuck_crds on kubectl error.\nstderr: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "ERROR: Pre-flight could not list CRDs") {
+		t.Errorf("expected clear ERROR message about pre-flight failing closed; stderr: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "gpu-operator") {
+		t.Errorf("expected ERROR to name the release; stderr: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--skip-preflight") {
+		t.Errorf("expected ERROR to point the operator to --skip-preflight bypass; stderr: %q", stderr.String())
+	}
+}
+
+// TestUndeployScript_PreflightPreservesJSONWhenKubectlWarnsOnStderr asserts
+// that successful `kubectl ... -o json` calls remain parseable even when
+// kubectl emits warnings on stderr.
+func TestUndeployScript_PreflightPreservesJSONWhenKubectlWarnsOnStderr(t *testing.T) {
+	for _, bin := range []string{"bash", "awk", "sed", "jq"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available; skipping shell-behavior test", bin)
+		}
+	}
+
+	ctx := context.Background()
+	outputDir := t.TempDir()
+	g := &Generator{
+		RecipeResult: createTestRecipeResult(),
+		ComponentValues: map[string]map[string]any{
+			"cert-manager": {},
+			"gpu-operator": {},
+		},
+		Version: "v1.0.0",
+	}
+	if _, err := g.Generate(ctx, outputDir); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	undeployPath := filepath.Join(outputDir, "undeploy.sh")
+
+	stubDir := t.TempDir()
+
+	helmStub := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "helm"), []byte(helmStub), 0o755); err != nil {
+		t.Fatalf("write helm stub: %v", err)
+	}
+
+	kubectlStub := `#!/bin/sh
+case "$*" in
+  "get crd -o json")
+    echo "warning: cached discovery response" >&2
+    echo '{"items":[{"metadata":{"name":"clusterpolicies.nvidia.com"},"spec":{"group":"nvidia.com","names":{"plural":"clusterpolicies"},"scope":"Cluster"}}]}'
+    ;;
+  "get crd clusterpolicies.nvidia.com -o json")
+    echo "warning: cached CRD read" >&2
+    echo '{"spec":{"names":{"plural":"clusterpolicies"},"group":"nvidia.com","scope":"Cluster"}}'
+    ;;
+  "get clusterpolicies.nvidia.com -o json")
+    echo "warning: cached CR list" >&2
+    echo '{"items":[{"metadata":{"name":"cluster-policy","finalizers":["nvidia.com/clusterpolicy"]}}]}'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(stubDir, "kubectl"), []byte(kubectlStub), 0o755); err != nil {
+		t.Fatalf("write kubectl stub: %v", err)
+	}
+
+	bashSnippet := `
+        for fn in extra_crds_for_release capture_kubectl_json check_crd_for_stuck_resources check_release_for_stuck_crds; do
+            snippet=$(sed -n "/^${fn}()/,/^}/p" "$UNDEPLOY")
+            eval "$snippet"
+        done
+        PREFLIGHT_DETAILS=$(mktemp)
+        check_release_for_stuck_crds "gpu-operator" "gpu-operator"
+        cat "$PREFLIGHT_DETAILS"
+        rm -f "$PREFLIGHT_DETAILS"
+    `
+
+	subCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(subCtx, "bash", "-c", "set -euo pipefail\n"+bashSnippet)
+	cmd.Env = append(os.Environ(),
+		"PATH="+stubDir+":"+os.Getenv("PATH"),
+		"UNDEPLOY="+undeployPath,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("script exited non-zero.\nerr: %v\nstdout: %s\nstderr: %s",
+			err, stdout.String(), stderr.String())
+	}
+
+	if !strings.Contains(stdout.String(), "cluster-policy") {
+		t.Errorf("expected pre-flight to keep parsing JSON despite kubectl stderr warnings; got stdout: %q\nstderr: %q",
+			stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "warning: cached discovery response") {
+		t.Errorf("expected kubectl stderr warning to remain visible to operators; stderr: %q", stderr.String())
+	}
+}
+
+// TestUndeployScript_PostflightWarnsOnExplicitExtraCRDs proves post-flight now
+// surfaces leftover exact-name CRDs from known crds/-installed releases even
+// when they are unannotated and therefore invisible to the Helm-only warning.
+func TestUndeployScript_PostflightWarnsOnExplicitExtraCRDs(t *testing.T) {
+	for _, bin := range []string{"bash", "sed", "jq", "awk", "sort", "tr"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available; skipping shell-behavior test", bin)
+		}
+	}
+
+	ctx := context.Background()
+	outputDir := t.TempDir()
+	g := &Generator{
+		RecipeResult: &recipe.RecipeResult{
+			Kind:       "RecipeResult",
+			APIVersion: "aicr.nvidia.com/v1alpha1",
+			Metadata: struct {
+				Version            string                     `json:"version,omitempty" yaml:"version,omitempty"`
+				AppliedOverlays    []string                   `json:"appliedOverlays,omitempty" yaml:"appliedOverlays,omitempty"`
+				ExcludedOverlays   []recipe.ExcludedOverlay   `json:"excludedOverlays,omitempty" yaml:"excludedOverlays,omitempty"`
+				ConstraintWarnings []recipe.ConstraintWarning `json:"constraintWarnings,omitempty" yaml:"constraintWarnings,omitempty"`
+			}{
+				Version: "v0.1.0",
+			},
+			ComponentRefs: []recipe.ComponentRef{
+				{
+					Name:      "kube-prometheus-stack",
+					Namespace: "monitoring",
+					Chart:     "prometheus-community/kube-prometheus-stack",
+					Version:   "82.8.0",
+					Source:    "https://prometheus-community.github.io/helm-charts",
+				},
+			},
+			DeploymentOrder: []string{"kube-prometheus-stack"},
+		},
+		ComponentValues: map[string]map[string]any{
+			"kube-prometheus-stack": {},
+		},
+		Version: "v1.0.0",
+	}
+	if _, err := g.Generate(ctx, outputDir); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	undeployPath := filepath.Join(outputDir, "undeploy.sh")
+
+	stubDir := t.TempDir()
+
+	kubectlStub := `#!/bin/sh
+case "$*" in
+  "get crd -o json")
+    echo '{"items":[{"metadata":{"name":"prometheuses.monitoring.coreos.com"},"spec":{"group":"monitoring.coreos.com","names":{"plural":"prometheuses"},"scope":"Namespaced"}}]}'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(stubDir, "kubectl"), []byte(kubectlStub), 0o755); err != nil {
+		t.Fatalf("write kubectl stub: %v", err)
+	}
+
+	bashSnippet := `
+        for fn in extra_crds_for_release capture_kubectl_json; do
+            snippet=$(sed -n "/^${fn}()/,/^}/p" "$UNDEPLOY")
+            eval "$snippet"
+        done
+        snippet=$(sed -n '/^# Check for Helm-annotated CRDs from uninstalled releases\./,/^if \[\[ "\${postflight_issues}" == "true" \]\]/p' "$UNDEPLOY" | sed '$d')
+        helm_orphaned_crds=""
+        explicit_orphaned_crds=""
+        postflight_all_crds_json=""
+        postflight_issues=false
+        eval "$snippet"
+        [[ "${postflight_issues}" == "true" ]]
+    `
+
+	subCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(subCtx, "bash", "-c", "set -euo pipefail\n"+bashSnippet)
+	cmd.Env = append(os.Environ(),
+		"PATH="+stubDir+":"+os.Getenv("PATH"),
+		"UNDEPLOY="+undeployPath,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("script exited non-zero.\nerr: %v\nstdout: %s\nstderr: %s",
+			err, stdout.String(), stderr.String())
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "WARNING: explicit CRDs from this bundle still present:") {
+		t.Errorf("expected post-flight explicit CRD warning; got stdout: %q stderr: %q", out, stderr.String())
+	}
+	if !strings.Contains(out, "prometheuses.monitoring.coreos.com") {
+		t.Errorf("expected post-flight warning to name the leftover CRD; got stdout: %q stderr: %q", out, stderr.String())
+	}
+}
+
+func TestUndeployScript_KustomizeOnlyBundleIsBashSyntaxValid(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available; skipping shell-syntax test")
+	}
+
+	ctx := context.Background()
+	outputDir := t.TempDir()
+	g := &Generator{
+		RecipeResult: createKustomizeRecipeResult(),
+		ComponentValues: map[string]map[string]any{
+			"my-kustomize-app": {},
+		},
+		Version: "v1.0.0",
+	}
+	if _, err := g.Generate(ctx, outputDir); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	undeployPath := filepath.Join(outputDir, "undeploy.sh")
+	subCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(subCtx, "bash", "-n", undeployPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated undeploy.sh is not bash-syntax valid for Kustomize-only bundle.\nerr: %v\noutput: %s",
+			err, string(output))
+	}
+}
+
+func TestUndeployScript_DynamoPlatformOwnsExplicitGroveCRDs(t *testing.T) {
+	for _, bin := range []string{"bash", "sed"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available; skipping shell-behavior test", bin)
+		}
+	}
+
+	ctx := context.Background()
+	outputDir := t.TempDir()
+	g := &Generator{
+		RecipeResult: &recipe.RecipeResult{
+			Kind:       "RecipeResult",
+			APIVersion: "aicr.nvidia.com/v1alpha1",
+			Metadata: struct {
+				Version            string                     `json:"version,omitempty" yaml:"version,omitempty"`
+				AppliedOverlays    []string                   `json:"appliedOverlays,omitempty" yaml:"appliedOverlays,omitempty"`
+				ExcludedOverlays   []recipe.ExcludedOverlay   `json:"excludedOverlays,omitempty" yaml:"excludedOverlays,omitempty"`
+				ConstraintWarnings []recipe.ConstraintWarning `json:"constraintWarnings,omitempty" yaml:"constraintWarnings,omitempty"`
+			}{
+				Version: "v0.1.0",
+			},
+			ComponentRefs: []recipe.ComponentRef{
+				{
+					Name:      "dynamo-platform",
+					Namespace: "dynamo-platform",
+					Chart:     "oci://example.com/dynamo-platform",
+					Version:   "0.9.1",
+					Source:    "oci://example.com",
+				},
+			},
+			DeploymentOrder: []string{"dynamo-platform"},
+		},
+		ComponentValues: map[string]map[string]any{
+			"dynamo-platform": {},
+		},
+		Version: "v1.0.0",
+	}
+	if _, err := g.Generate(ctx, outputDir); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	undeployPath := filepath.Join(outputDir, "undeploy.sh")
+
+	bashSnippet := `
+        snippet=$(sed -n '/^extra_crds_for_release()/,/^}/p' "$UNDEPLOY")
+        eval "$snippet"
+        platform_crds=$(extra_crds_for_release "dynamo-platform")
+        printf '%s\n' "$platform_crds"
+        test -n "$platform_crds"
+        test -z "$(extra_crds_for_release "dynamo-crds")"
+    `
+
+	subCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(subCtx, "bash", "-c", "set -euo pipefail\n"+bashSnippet)
+	cmd.Env = append(os.Environ(), "UNDEPLOY="+undeployPath)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("script exited non-zero.\nerr: %v\nstdout: %s\nstderr: %s",
+			err, stdout.String(), stderr.String())
+	}
+
+	for _, crd := range []string{
+		"podcliques.grove.io",
+		"podcliquescalinggroups.grove.io",
+		"podcliquesets.grove.io",
+		"podgangs.scheduler.grove.io",
+	} {
+		if !strings.Contains(stdout.String(), crd) {
+			t.Errorf("expected dynamo-platform explicit CRD list to include %s; stdout: %q stderr: %q",
+				crd, stdout.String(), stderr.String())
+		}
 	}
 }

@@ -3,6 +3,10 @@
 This file is the canonical source for coding-agent rules. `AGENTS.md` is an auto-synced mirror (CI enforced).
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Local Overlay
+
+If present, also read `AGENTS.local.md` at the repo root. The file is gitignored repo-wide so personal overlays stay local — agents must check the exact path directly (e.g., `Read` or `cat`), not rely on ignore-respecting discovery tools such as `rg`, `fd`, or `git ls-files`. Treat it as a local overlay for this working copy: follow it when it does not conflict with higher-priority instructions or this shared `AGENTS.md`.
+
 ## Role & Expertise
 
 Act as a Principal Distributed Systems Architect with deep expertise in Go and cloud-native architectures. Focus on correctness, resiliency, and operational simplicity. All code must be production-grade, not illustrative pseudo-code.
@@ -296,6 +300,18 @@ return err
 
 **Exception:** Wrapping is unnecessary for read-only `Close()` returns and K8s helpers like `k8s.IgnoreNotFound(err)`.
 
+**Always use `errors.Is()` for sentinel error checks.** `golangci-lint` enforces the `errorlint` rule — comparing errors with `==` fails on wrapped errors and will be rejected by CI:
+
+```go
+// BAD - fails errorlint, breaks on wrapped errors
+if err == io.EOF {
+
+// GOOD - works with wrapped errors, passes linter
+if errors.Is(err, io.EOF) {
+```
+
+Note: in files that import `pkg/errors`, the standard library `errors` package is aliased as `stderrors`, so use `stderrors.Is(...)` there.
+
 **Writable file handles must check `Close()` errors.** If a file handle is writable (e.g., from `os.Create` or `os.OpenFile`), closing it may flush buffered data; always capture and check the error:
 ```go
 // BAD - writable Close() error ignored
@@ -451,6 +467,50 @@ ${AICR_BIN} validate -r recipe.yaml -s snapshot.yaml --no-cluster
 - All checks report status as "skipped - no-cluster mode (test mode)"
 - Constraints are still evaluated inline (no cluster access needed)
 
+## Documentation Style
+
+**Auto-anchors, no TOCs.** Both GitHub and the Fern-rendered docs site
+auto-generate anchor IDs from heading text (lowercase, spaces → hyphens).
+Do not add `## Table of Contents` blocks or explicit `<a name="...">` /
+`{#slug}` markup — they drift out of sync and duplicate what the platforms
+already provide on hover.
+
+**Promote `**Bold Label:**` paragraphs to real headings sparingly.** A bold
+label becomes a heading only when it names a topic (feature, subsystem,
+algorithm, pattern, named behavior) with substantial content beneath it
+(≥ ~8 content lines is a useful rule of thumb). Leave as bold paragraphs:
+- **Scaffolding** that recurs per section: `Synopsis`, `Flags`, `Examples`,
+  `Example`, `Behavior`, `Usage`, `Parameters`, `Returns`.
+- **Generic structural labels** that just describe what's in the next
+  block: `Output`, `Input Sources`, `Benefits`, `Responsibilities`,
+  `Key Features`, `Key Points`, `Installation`.
+- **Thin sections (< 8 lines)** even if the label is a named topic — a
+  2-sentence intro that mostly delegates to children isn't itself a topic.
+- **FAQ-style entries** under a collection heading (e.g. `### Common Issues`
+  with entries like `**"Connection refused" error:**` + 2-line fix) —
+  promoting each fragments navigation without adding substance.
+- **Paired short subsections** — if two thin labels are conceptual siblings
+  (e.g. `**Updating versions:**` + `**Adding components:**`), promote
+  both or neither.
+
+**Slug gotchas when promoting.** GitHub preserves hyphens literally but
+strips most other punctuation:
+- Trailing `` (`--flag`) `` → triple-hyphen slug (`…values---dynamic`).
+  Drop the parenthetical if the flag name is already in the first paragraph.
+- `+`, `&`, `/` between words → double-hyphen slugs (`Base + Overlay
+  Merging` → `base--overlay-merging`). Rewrite with `and` / `or`.
+
+**Anchor link hygiene.** Broken anchor links are caught in CI by
+[lychee](https://github.com/lycheeverse/lychee) on any PR that touches
+`docs/**` (see `.github/workflows/fern-docs-ci.yaml`, config in
+`.lychee.toml`) — `make qualify` does NOT run it, so CI is the safety
+net. When renaming or removing a heading:
+- Grep for `<filename>.md#<old-slug>` across the repo first — other docs,
+  Helm templates, and `SECURITY.md` link into user-facing anchors, and
+  those inbound links won't be in the same file you're editing.
+- If intentionally removing a heading an external doc linked to, update
+  the inbound link in the same PR.
+
 ## Anti-Patterns (Do Not Do)
 
 | Anti-Pattern | Correct Approach |
@@ -470,6 +530,7 @@ ${AICR_BIN} validate -r recipe.yaml -s snapshot.yaml --no-cluster
 | Guess at missing parameters | Ask for clarification |
 | Continue after 3 failed fix attempts | Stop, reassess approach, explain blockers |
 | Use polling loops for K8s operations | Use watch API for efficiency |
+| Compare errors with `==` (e.g., `err == io.EOF`) | Use `errors.Is(err, io.EOF)` (`stderrors.Is` in files that alias stdlib errors) — `errorlint` enforced by CI |
 | Duplicate K8s utilities across packages | Use shared utilities from `pkg/k8s/pod` |
 | Run tests that connect to live clusters | Always use `--no-cluster` flag in tests |
 | Use boolean flags to track options | Use pointer pattern (nil = not set, &value = set) |
@@ -482,10 +543,22 @@ ${AICR_BIN} validate -r recipe.yaml -s snapshot.yaml --no-cluster
 
 **Pre-push checklist:** Always run `make qualify` before pushing. This is the CI-equivalent gate that covers tests, linting (golangci-lint + yamllint), e2e, vulnerability scan, and repo-specific checks (docs sidebar, agents sync). Do not substitute a subset of commands — if `make qualify` passes locally, CI will pass.
 
+**Mandatory lint gate for Go changes:** If your PR changes any `.go` files, you MUST run `golangci-lint run -c .golangci.yaml` on each affected package path (e.g., `./pkg/recipe/...`, `./cmd/aicr/...`, `./tests/chainsaw/...`) and confirm zero issues before creating or pushing the PR. For a full module scan, use `./...`. Do not rely on CI to catch lint failures — fix them locally first. This applies even to PRs labeled as "documentation only" if they include Go code changes.
+
 **Branch hygiene:**
 - Always rebase onto the target branch before pushing: `git fetch origin main && git rebase origin/main`
 - Squash commits into a single commit before push
 - Cryptographically sign commits (`git commit -S`)
+
+**Documentation updates:** When a PR adds or changes user-visible behavior (new CLI flag, API endpoint, component, recipe field, deployment pattern, environment variable, error code), update the relevant page in `docs/` in the same PR — don't defer to a follow-up. Common targets by kind of change:
+- CLI flag / subcommand → `docs/user/cli-reference.md`
+- API endpoint / query parameter → `docs/user/api-reference.md`
+- Registry component → `docs/user/component-catalog.md`
+- Recipe / overlay / mixin structure → `docs/integrator/recipe-development.md` and `docs/contributor/data.md`
+- Internal package or architecture → `docs/contributor/<area>.md`
+- **Enum/constant value added** (e.g., new accelerator, service, OS, intent, platform, error code) → the value is usually enumerated in *many* files, not one, and grepping for the *new* value returns nothing. Start from the authoritative Go type (e.g., `pkg/recipe/criteria.go` for `CriteriaAccelerator*`), list every current value, and verify each appears wherever the enum is documented. Audit targets typically include: the OpenAPI contract at `api/aicr/v1/server.yaml` (every `enum:` block); doc pages `docs/README.md` (glossary), `docs/user/cli-reference.md`, `docs/user/api-reference.md`, `docs/contributor/api-server.md`, `docs/contributor/cli.md`, `docs/contributor/data.md`, `docs/contributor/validations.md`, and the site-docs mirror under `site/docs/` (e.g., `site/docs/getting-started/index.md`); Go-visible surfaces in the package that defines the type (package godoc in `pkg/<area>/doc.go`, field/type comments on the Go struct, and any urfave/cli `Description`/`Usage` strings that enumerate values, e.g., `pkg/cli/recipe.go`); and issue templates that surface the enum in dropdowns (`.github/ISSUE_TEMPLATE/*.yml`). Grepping `docs/` for an already-documented sibling value (e.g., `gb200`) catches forward additions but misses pre-existing drift — check against the Go type, not a known-good sibling.
+
+Follow the heading conventions in the `## Documentation Style` section above. Doc-only PRs (label `documentation`) are still subject to the full `make qualify` gate.
 
 **PR description:** Use the template from `.github/PULL_REQUEST_TEMPLATE.md` exactly as defined there. Do not inline a modified copy — read and fill in the canonical template. The template covers: Summary, Motivation/Context (with Fixes/Related), Type of Change, Components Affected, Implementation Notes, Testing, Risk Assessment, and Checklist.
 
