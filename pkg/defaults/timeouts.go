@@ -321,6 +321,12 @@ const (
 
 	// PodReadyTimeout is the timeout for waiting for pods to become ready.
 	PodReadyTimeout = 2 * time.Minute
+
+	// PreflightCleanupTimeout bounds the best-effort probe-pod delete in
+	// deferred validator preflight cleanup paths, which run with
+	// context.Background() so they still fire after the parent context
+	// has been canceled.
+	PreflightCleanupTimeout = 30 * time.Second
 )
 
 // HTTP response limits for conformance checks.

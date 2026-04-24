@@ -251,6 +251,16 @@ func TestDeployJobEnvVars(t *testing.T) {
 		t.Error("AICR_NAMESPACE should use downward API metadata.namespace")
 	}
 
+	// AICR_CHECK_TIMEOUT propagates the entry's catalog-level timeout to
+	// validators.checkTimeoutFromEnv so the inner parent context matches
+	// the Job's ActiveDeadlineSeconds. Value is time.Duration.String().
+	timeoutEnv, ok := envMap["AICR_CHECK_TIMEOUT"]
+	if !ok {
+		t.Error("AICR_CHECK_TIMEOUT must be injected")
+	} else if got, want := timeoutEnv.Value, testEntry().Timeout.String(); got != want {
+		t.Errorf("AICR_CHECK_TIMEOUT = %q, want %q", got, want)
+	}
+
 	if envMap["CUSTOM_VAR"].Value != "custom_value" {
 		t.Errorf("CUSTOM_VAR = %q, want %q", envMap["CUSTOM_VAR"].Value, "custom_value")
 	}

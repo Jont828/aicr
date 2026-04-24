@@ -12,25 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// performance is a validator container for all performance phase checks.
-// Each check is selected via the first argument.
-//
-// Usage:
-//
-//	performance nccl-all-reduce-bw
-//	performance nccl-all-reduce-bw-net
-//	performance nccl-all-reduce-bw-nvls
-package main
+package defaults
 
-import (
-	"github.com/NVIDIA/aicr/validators"
+const (
+	// ProbeImage is the multi-arch (amd64+arm64) toolbox used by validator
+	// probe Pods. busybox provides /bin/sh, grep, ls, sleep in ~2 MB.
+	ProbeImage = "busybox:1.37"
 )
-
-func main() {
-	validators.Run(map[string]validators.CheckFunc{
-		"nccl-all-reduce-bw":      checkNCCLAllReduceBW,
-		"nccl-all-reduce-bw-net":  checkNCCLAllReduceBWNET,
-		"nccl-all-reduce-bw-nvls": checkNCCLAllReduceBWNVLS,
-		"inference-perf":          checkInferencePerf,
-	})
-}

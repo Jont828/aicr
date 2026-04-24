@@ -12,25 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// performance is a validator container for all performance phase checks.
-// Each check is selected via the first argument.
-//
-// Usage:
-//
-//	performance nccl-all-reduce-bw
-//	performance nccl-all-reduce-bw-net
-//	performance nccl-all-reduce-bw-nvls
 package main
 
-import (
-	"github.com/NVIDIA/aicr/validators"
-)
+import "k8s.io/apimachinery/pkg/runtime/schema"
 
-func main() {
-	validators.Run(map[string]validators.CheckFunc{
-		"nccl-all-reduce-bw":      checkNCCLAllReduceBW,
-		"nccl-all-reduce-bw-net":  checkNCCLAllReduceBWNET,
-		"nccl-all-reduce-bw-nvls": checkNCCLAllReduceBWNVLS,
-		"inference-perf":          checkInferencePerf,
-	})
+// resourceClaimTemplateGVR identifies the standard K8s DRA
+// ResourceClaimTemplate kind. Referenced by any validator that needs to
+// look up or wait on DRA templates (e.g., NVLS ComputeDomain→RCT
+// reconciliation; inference pods referencing DRA claims).
+var resourceClaimTemplateGVR = schema.GroupVersionResource{
+	Group:    "resource.k8s.io",
+	Version:  "v1",
+	Resource: "resourceclaimtemplates",
 }

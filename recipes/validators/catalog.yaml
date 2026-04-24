@@ -156,3 +156,17 @@ validators:
     timeout: 5m
     args: ["platform-health"]
     env: []
+  - name: nccl-all-reduce-bw-net
+    phase: performance
+    description: "Verify NCCL All Reduce Bus Bandwidth on the NET transport (EFA on EKS)"
+    image: ghcr.io/nvidia/aicr-validators/performance:latest
+    timeout: 30m
+    args: ["nccl-all-reduce-bw-net"]
+    env: []
+  - name: nccl-all-reduce-bw-nvls
+    phase: performance
+    description: "Verify NCCL All Reduce Bus Bandwidth on the NVLS transport (MNNVL across an NVL72 IMEX domain)"
+    image: ghcr.io/nvidia/aicr-validators/performance:latest
+    timeout: 30m
+    args: ["nccl-all-reduce-bw-nvls"]
+    env: []

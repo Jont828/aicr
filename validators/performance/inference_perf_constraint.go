@@ -123,7 +123,7 @@ const (
 	gpuDRADriverName = "gpu.nvidia.com"
 )
 
-// GVRs for Dynamo, KAI Scheduler, and DRA CRDs.
+// GVRs for Dynamo and KAI Scheduler CRDs.
 var (
 	dynamoDeploymentGVR = schema.GroupVersionResource{
 		Group:    "nvidia.com",
@@ -135,12 +135,6 @@ var (
 		Group:    "scheduling.run.ai",
 		Version:  "v2",
 		Resource: "queues",
-	}
-
-	resourceClaimTemplateGVR = schema.GroupVersionResource{
-		Group:    "resource.k8s.io",
-		Version:  "v1",
-		Resource: "resourceclaimtemplates",
 	}
 )
 

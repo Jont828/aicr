@@ -136,6 +136,7 @@ The validator engine mounts snapshot and recipe data as ConfigMaps:
 | `AICR_SNAPSHOT_PATH` | Override snapshot mount path |
 | `AICR_RECIPE_PATH` | Override recipe mount path |
 | `AICR_VALIDATOR_IMAGE_REGISTRY` | Override image registry prefix (set by user) |
+| `AICR_CHECK_TIMEOUT` | Parent-context timeout for the check, injected by the Job deployer from the catalog entry's `timeout` field (Go duration string, e.g. `30m`). Falls back to `defaults.CheckExecutionTimeout` when unset or malformed; a malformed value is logged at WARN. Use `ctx.Ctx` (set by `LoadContext`) to honor it. |
 | `AICR_VALIDATOR_IMAGE_TAG` | Override the resolved image tag (e.g. `latest`). Bypasses the default `:v<version>` / `:sha-<commit>` resolution for feature-branch dev builds whose commit has no published image. |
 | `AICR_NODE_SELECTOR` | User-provided node selector override for inner workloads (comma-separated `key=value` pairs). Set by the `--node-selector` CLI flag. Use `ctx.NodeSelector` to access the parsed value. |
 | `AICR_TOLERATIONS` | User-provided toleration override for inner workloads (comma-separated `key=value:effect` entries). Set by the `--toleration` CLI flag. Use `ctx.Tolerations` to access the parsed value. |
@@ -159,7 +160,7 @@ type Context struct {
 }
 ```
 
-`LoadContext()` builds this from the container environment: reads mounted ConfigMaps, creates in-cluster K8s clients, and sets a timeout from `defaults.CheckExecutionTimeout`.
+`LoadContext()` builds this from the container environment: reads mounted ConfigMaps, creates in-cluster K8s clients, and sets the parent-context timeout via `validators/context.go:checkTimeoutFromEnv` — which honors `AICR_CHECK_TIMEOUT` (injected by the Job deployer from the catalog entry's `timeout` field) and falls back to `defaults.CheckExecutionTimeout` when unset or malformed.
 
 ### Scheduling Overrides
 
