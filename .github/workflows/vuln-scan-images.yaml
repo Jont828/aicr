@@ -73,28 +73,26 @@ jobs:
         env:
           GOFLAGS: -mod=vendor
           KO_DOCKER_REPO: ghcr.io/nvidia/aicr
-          SHORT_SHA: ${{ env.SCAN_TAG }}
         run: |
           set -euo pipefail
           ko build ./cmd/aicr \
-            --base-import-paths \
+            --bare \
             --platform=linux/amd64,linux/arm64 \
             --image-label="org.opencontainers.image.revision=${{ github.sha }}" \
-            --tags="${SHORT_SHA}" \
+            --tags="${SCAN_TAG}" \
             --base-image="nvcr.io/nvidia/cuda:13.2.1-runtime-ubuntu24.04"
 
       - name: Build and push aicrd
         env:
           GOFLAGS: -mod=vendor
           KO_DOCKER_REPO: ghcr.io/nvidia/aicrd
-          SHORT_SHA: ${{ env.SCAN_TAG }}
         run: |
           set -euo pipefail
           ko build ./cmd/aicrd \
-            --base-import-paths \
+            --bare \
             --platform=linux/amd64,linux/arm64 \
             --image-label="org.opencontainers.image.revision=${{ github.sha }}" \
-            --tags="${SHORT_SHA}" \
+            --tags="${SCAN_TAG}" \
             --base-image="gcr.io/distroless/static:nonroot"
 
   # =============================================================================
