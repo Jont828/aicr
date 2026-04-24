@@ -33,13 +33,30 @@ spec:
       value: ">= 1.32.4"
 
   componentRefs:
+    # GB200+EKS GPU Operator prerequisites. Keep in sync with the same block
+    # in gb200-eks-training.yaml. The NVreg flag and cdi+gdrcopy are needed
+    # for multi-node inference that crosses EFA — tensor-parallel serving
+    # over the network has the same dma-buf attach requirement as training
+    # all-reduce. The mixin system can't extend componentRefs already
+    # declared in the inheritance chain, so this lives per-leaf for now.
     - name: gpu-operator
       type: Helm
+      manifestFiles:
+        - components/gpu-operator/manifests/kernel-module-params.yaml
       dependencyRefs:
         - nfd
         - cert-manager
         - kube-prometheus-stack
         - nodewright-customizations
+      overrides:
+        cdi:
+          enabled: true
+        gdrcopy:
+          enabled: true
+        driver:
+          version: 580.126.20
+          kernelModuleConfig:
+            name: nvidia-kernel-module-params
 
     # GB200 uses nodewright no-op: the H100 tuning packages (nvidia-setup,
     # nvidia-tuned) are not compatible with GB200's ARM64 host CPU and
@@ -55,3 +72,20 @@ spec:
         intent: inference
       dependencyRefs:
         - nodewright-operator
+
+  # NCCL fabric health checks. NET exercises EFA (inter-node), NVLS exercises
+  # MNNVL (intra-NVL72). Both matter for multi-node inference that spans the
+  # fabric (tensor-parallel serving, MoE expert parallelism); single-node
+  # deployments hit the WorkerCount < 2 skip path gracefully. Thresholds sized
+  # for a 2-node GB200 pair — will be raised once production NVL72 data is
+  # available.
+  validation:
+    performance:
+      checks:
+        - nccl-all-reduce-bw-net
+        - nccl-all-reduce-bw-nvls
+      constraints:
+        - name: nccl-all-reduce-bw-net
+          value: ">= 40"
+        - name: nccl-all-reduce-bw-nvls
+          value: ">= 500"

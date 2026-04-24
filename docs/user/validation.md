@@ -40,9 +40,21 @@ any phase. If pre-flight fails, no validator Jobs are deployed.
 
 ## Training performance validation
 
-Training performance runs the `nccl-all-reduce-bw` check — a Kubeflow `TrainJob`
-that runs the canonical `all_reduce_perf` benchmark across all GPU nodes and
-measures aggregate bus bandwidth.
+Training performance runs an NCCL all-reduce benchmark — a Kubeflow `TrainJob`
+that runs `all_reduce_perf` across GPU nodes and measures aggregate bus
+bandwidth. Three check variants are available; the recipe picks the one (or
+ones) that match the target fabric:
+
+| Check | Transport | When it's selected |
+|---|---|---|
+| `nccl-all-reduce-bw` | Auto-detect (whatever NCCL picks) | Default for H100 on EKS/GKE, and for GB200/B200 on non-EKS services. Preserves the pre-variant behavior. |
+| `nccl-all-reduce-bw-net` | NET (EFA on EKS) | GB200 + EKS. Asserts EFA actually carried traffic — catches silent fallback to Socket when the NVIDIA driver is missing `NVreg_GrdmaPciTopoCheckOverride=1`. |
+| `nccl-all-reduce-bw-nvls` | NVLS (MNNVL across an NVL72 IMEX domain) | GB200 + EKS. Asserts the NVLS communicator actually initialized — catches silent fallback to EFA when the IMEX domain is misconfigured. |
+
+GB200/EKS recipes (both `training` and `inference` intents) enable `-net` and
+`-nvls` together rather than the auto-detect variant, because those nodes
+expose two inter-node fabrics simultaneously and a single auto-detect test
+would only exercise one of them.
 
 ```bash
 # Capture snapshot, generate training recipe, validate the performance phase.
@@ -55,24 +67,26 @@ aicr recipe --service eks --accelerator h100 --os ubuntu \
 aicr validate --recipe recipe.yaml --snapshot snapshot.yaml --phase performance
 ```
 
-The generated recipe lists `nccl-all-reduce-bw` under
+The generated recipe lists the selected variant(s) under
 `validation.performance.checks` with a platform-tuned bandwidth constraint
-(example: `>= 300 GB/s` for H100 + EFA).
+(example: `>= 300 GB/s` for H100 + EFA; `>= 40 GB/s` NET and `>= 500 GB/s`
+NVLS for GB200 + EFA, each sized for a 2-node pair).
 
-Expected flow (~5–10 min): readiness pre-flight → deploy `TrainingRuntime` +
-`TrainJob` in `aicr-validation` → worker pods reach `Running` → run
-`all_reduce_perf` → parse peak bus bandwidth → compare to recipe constraint
-(10 % tolerance) → cleanup.
+Expected flow (~5–10 min per variant): readiness pre-flight → deploy
+`TrainingRuntime` + `TrainJob` in `aicr-validation` → worker pods reach
+`Running` → run `all_reduce_perf` → parse peak bus bandwidth → verify the
+intended transport actually carried traffic (for `-net` / `-nvls`) → compare
+to recipe constraint (10 % tolerance) → cleanup.
 
 A passing CTRF entry:
 
 ```json
 {
-  "name": "nccl-all-reduce-bw",
+  "name": "nccl-all-reduce-bw-net",
   "status": "passed",
   "suite": ["performance"],
   "stdout": [
-    "NCCL All Reduce bandwidth: <actual> GB/s",
+    "NCCL All Reduce bandwidth (nccl-all-reduce-bw-net): <actual> GB/s",
     "Constraint: >= <threshold> → true"
   ]
 }
