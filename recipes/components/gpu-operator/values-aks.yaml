@@ -22,7 +22,44 @@
 # with `--gpu-driver none` to prevent AKS from also installing drivers.
 # To use the AKS-managed driver instead, set driver.enabled to false.
 # See https://learn.microsoft.com/en-us/azure/aks/nvidia-gpu-operator
+#
+# Reference: https://github.com/Azure/aks-rdma-infiniband/blob/main/configs/values/gpu-operator/values.yaml
+# TODO: Evaluate full alignment with aks-rdma-infiniband setup scripts
+#       (tests/setup-infra/deploy-aks.sh) and fold remaining automation into recipe.
 
-# AKS pre-installs NVIDIA container toolkit
+# AKS pre-installs NVIDIA container toolkit; disable to avoid conflicts.
 toolkit:
   enabled: false
+
+driver:
+  rdma:
+    # Use MOFED installed by network-operator instead of building nvidia-peermem
+    # from source. Required for GPUDirect RDMA on AKS ND-series.
+    useHostMofed: true
+
+# Network-operator deploys its own NFD instance; disable GPU operator's copy
+# to avoid running duplicate NFD DaemonSets on every node.
+nfd:
+  enabled: false
+
+# The following flags are set in the aks-rdma-infiniband reference configuration
+# but are not required for RDMA functionality. They suppress DaemonSets that
+# serve no purpose on AKS ND-H100 nodes. Uncomment if your deployment needs them.
+# Reference: https://github.com/Azure/aks-rdma-infiniband/blob/main/configs/values/gpu-operator/values.yaml
+
+# migManager:
+#   enabled: false  # Multi-Instance GPU not required on ND-H100 inference nodes
+
+# vgpuDeviceManager:
+#   enabled: false  # vGPU support not needed
+
+# vfioManager:
+#   enabled: false  # VFIO-PCI passthrough not used
+
+# sandboxDevicePlugin:
+#   enabled: false  # Sandboxed workloads not enabled
+
+# dcgmExporter:
+#   serviceMonitor:
+#     additionalLabels:
+#       release: kube-prometheus  # Must match kube-prometheus-stack Helm release name
