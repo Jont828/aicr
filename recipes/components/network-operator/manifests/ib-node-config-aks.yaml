@@ -25,9 +25,11 @@
 # nodeSelector targets nodes labeled by nfd-network-rule (pci-15b3.present=true)
 # so this only runs on IB-capable nodes, not CPU-only nodes.
 #
-# TODO: Remove once Skyhook gains AKS support and can handle host-level tuning
-#       via the nvidia-tuned/nvidia-setup-full packages (currently unsupported
-#       on AKS per recipes/overlays/h100-aks-inference.yaml).
+# TODO: Remove once Nodewright (formerly Skyhook) gains AKS support and can
+#       handle host-level tuning via the nvidia-tuned package. Nodewright is
+#       adding AKS configs (NVIDIA/nodewright-packages#39) but RDMA/MEMLOCK
+#       setup is not yet included. Track upstream progress and replace this
+#       DaemonSet with a Nodewright SkyhookPackage once available.
 ---
 apiVersion: apps/v1
 kind: DaemonSet
