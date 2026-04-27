@@ -38,6 +38,7 @@ jobs:
     permissions:
       contents: read
       issues: read
+      organization-projects: read
     steps:
 
       - name: Collect issue metrics
@@ -56,6 +57,9 @@ jobs:
             const MAX_SLA_ITEMS = 5;
             const TITLE_MAX = 50;
             const REPO_URL = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}`;
+            const PROJECT_URL = 'https://github.com/orgs/NVIDIA/projects/248';
+            const PROJECT_NUMBER = 248;
+            const PROJECT_ORG = 'NVIDIA';
 
             // ---- Helpers ----
             const hasLabel = (issue, name) =>
@@ -89,6 +93,43 @@ jobs:
               !i.pull_request && new Date(i.closed_at) >= new Date(since),
             ).length;
 
+            // ---- Fetch priority from project board via GraphQL ----
+            // Build a map of issueNumber → priority (P0/P1/P2) from
+            // the org project board's Priority custom field.
+            const priorityMap = new Map();
+            const onBoard = new Set();
+            let cursor = null;
+            do {
+              const result = await github.graphql(`
+                query($org: String!, $number: Int!, $cursor: String) {
+                  organization(login: $org) {
+                    projectV2(number: $number) {
+                      items(first: 100, after: $cursor) {
+                        pageInfo { hasNextPage endCursor }
+                        nodes {
+                          content { ... on Issue { number } }
+                          fieldValueByName(name: "Priority") {
+                            ... on ProjectV2ItemFieldSingleSelectValue { name }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `, { org: PROJECT_ORG, number: PROJECT_NUMBER, cursor });
+              const items = result.organization.projectV2.items;
+              for (const node of items.nodes) {
+                const num = node.content?.number;
+                if (!num) continue;
+                onBoard.add(num);
+                const pri = node.fieldValueByName?.name;
+                if (pri) priorityMap.set(num, pri);
+              }
+              cursor = items.pageInfo.hasNextPage ? items.pageInfo.endCursor : null;
+            } while (cursor);
+
+            const getPriority = (issue) => priorityMap.get(issue.number) || null;
+
             // ---- Compute metrics ----
             const total = openIssues.length;
             const newToday = openIssues.filter(
@@ -103,40 +144,42 @@ jobs:
               .map(l => [l, openIssues.filter(i => hasLabel(i, l)).length])
               .filter(([, c]) => c > 0);
 
-            // Priority breakdown
+            // Priority breakdown (from project board field)
             let prioritized = 0;
             const priorities = PRIORITY_LABELS.map(l => {
-              const c = openIssues.filter(i => hasLabel(i, l)).length;
+              const c = openIssues.filter(i => getPriority(i) === l).length;
               prioritized += c;
               return [l, c];
             });
             const noPriority = total - prioritized;
+            const notOnBoard = openIssues.filter(i => !onBoard.has(i.number)).length;
 
-            // Unassigned P0/P1
-            const unassigned = openIssues.filter(i =>
-              (hasLabel(i, 'P0') || hasLabel(i, 'P1')) &&
-              (!i.assignees || i.assignees.length === 0),
-            ).length;
+            // Unassigned P0/P1 (from project board field)
+            const unassigned = openIssues.filter(i => {
+              const pri = getPriority(i);
+              return (pri === 'P0' || pri === 'P1') &&
+                (!i.assignees || i.assignees.length === 0);
+            }).length;
 
-            // SLA analysis (P0: 30 d, P1: 180 d)
+            // SLA analysis (P0: 30 d, P1: 180 d, from project board field)
             const breaches = [];
             const atRisk = [];
             for (const issue of openIssues) {
+              const pri = getPriority(issue);
+              if (!pri || !SLA[pri]) continue;
+              const sla = SLA[pri];
               const age = ageDays(issue);
-              for (const [key, sla] of Object.entries(SLA)) {
-                if (!hasLabel(issue, key)) continue;
-                const title = truncate(issue.title);
-                if (age > sla.days) {
-                  breaches.push({
-                    num: issue.number, title, pri: key,
-                    age, over: age - sla.days,
-                  });
-                } else if (age > sla.warnDays) {
-                  atRisk.push({
-                    num: issue.number, title, pri: key,
-                    left: sla.days - age,
-                  });
-                }
+              const title = truncate(issue.title);
+              if (age > sla.days) {
+                breaches.push({
+                  num: issue.number, title, pri,
+                  age, over: age - sla.days,
+                });
+              } else if (age > sla.warnDays) {
+                atRisk.push({
+                  num: issue.number, title, pri,
+                  left: sla.days - age,
+                });
               }
             }
             breaches.sort((a, b) => b.over - a.over);
@@ -167,26 +210,30 @@ jobs:
               lines.push(`_By type:_ ${typeParts.join(', ')}`);
             }
 
-            // Priority breakdown
+            // Priority breakdown (links to project board filtered by priority)
             const priParts = priorities.map(([l, c]) => {
-              const url = issueFilter(`is:issue is:open label:${l}`);
+              const url = `${PROJECT_URL}/views/2?filterQuery=${encodeURIComponent(`priority:${l}`)}`;
               return c > 0 ? `${l}: ${link(url, `*${c}*`)}` : `${l}: 0`;
             });
             if (noPriority > 0) {
-              const noPriUrl = issueFilter('is:issue is:open -label:P0 -label:P1 -label:P2');
+              const noPriUrl = `${PROJECT_URL}/views/2?filterQuery=${encodeURIComponent('no:priority')}`;
               priParts.push(`none: ${link(noPriUrl, noPriority)}`);
             }
             lines.push(`_By priority:_ ${priParts.join(', ')}`);
 
-            // Flags row (triage + unassigned, only when non-zero)
+            // Flags row (triage + unassigned + not on board, only when non-zero)
             const flags = [];
             if (needsTriage > 0) {
               const triageUrl = issueFilter('is:issue is:open label:needs-triage');
               flags.push(`Triage: ${link(triageUrl, `*${needsTriage}*`)}`);
             }
             if (unassigned > 0) {
-              const unownedUrl = issueFilter('is:issue is:open no:assignee label:P0 label:P1');
+              const unownedUrl = `${PROJECT_URL}/views/2?filterQuery=${encodeURIComponent('priority:P0,P1 no:assignee')}`;
               flags.push(`Unowned P0/P1: ${link(unownedUrl, `*${unassigned}*`)}`);
+            }
+            if (notOnBoard > 0) {
+              const notOnBoardUrl = issueFilter('is:issue is:open -project:NVIDIA/248');
+              flags.push(`Not on board: ${link(notOnBoardUrl, `*${notOnBoard}*`)}`);
             }
             if (flags.length > 0) lines.push(flags.join(', '));
 
@@ -243,6 +290,7 @@ jobs:
             }
             md.push(`| No priority | ${noPriority} |`);
             if (unassigned > 0) md.push(`| Unowned P0/P1 | ${unassigned} |`);
+            if (notOnBoard > 0) md.push(`| Not on board | ${notOnBoard} |`);
             if (breaches.length > 0) {
               md.push('');
               md.push('### SLA Breaches');
