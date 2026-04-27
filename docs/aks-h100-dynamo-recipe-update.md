@@ -1,248 +1,130 @@
-# Update AKS H100 Dynamo Inference Recipe
+# AKS H100 Dynamo Recipe Update
 
-## Context
+## Summary
 
-The existing `h100-aks-ubuntu-inference-dynamo` recipe is outdated compared to the working AKS ND-H100 cluster. Key gaps: GPU operator v25→v26, network operator v25→v26, dynamo v0.9→v1.0.1, missing RDMA shared device plugin, missing NicClusterPolicy (MOFED driver), missing NFD NodeFeatureRule for Mellanox. This plan updates the AKS recipe so `aicr recipe --service aks --accelerator h100 --intent inference --os ubuntu --platform dynamo` produces a bundle that can recreate the working cluster state.
+This document describes the changes made to bring the `h100-aks-ubuntu-inference-dynamo` recipe in sync with a working AKS ND-H100 cluster running Dynamo. The cluster was used as the reference state — each change maps to something observed running on that cluster.
 
-## Key Design Decisions
+**Recipe changed:** `h100-aks-ubuntu-inference-dynamo` (via `aks.yaml` base overlay)
 
-### 1. NicClusterPolicy via manifest, not Helm values
+---
 
-The network-operator Helm chart does NOT template a NicClusterPolicy CR — it only installs the CRD and the operator. The current `deployCR: true` / `nicClusterPolicy.enabled: true` values in `recipes/components/network-operator/values.yaml` are dead config (confirmed: chart has no template for it, no AICR Go code references them).
+## RDMA / InfiniBand Stack
 
-A NicClusterPolicy is the network-operator's declarative config for "what networking DaemonSets should run on my IB nodes." You create the CR and the operator reconciles it by deploying DaemonSets. In our case:
-- `ofedDriver` → deploys the MOFED driver DaemonSet
-- `rdmaSharedDevicePlugin` → deploys the RDMA shared device plugin DaemonSet + ConfigMap
-- `docaTelemetryService` → deploys the DOCA telemetry DaemonSet
+AKS ND-H100 nodes have ConnectX-7 InfiniBand NICs. The full RDMA stack requires five layers, each handled by a different component.
 
-On the working cluster, the MOFED part is managed by the NicClusterPolicy CR but the RDMA device plugin was deployed manually as a raw DaemonSet. This plan consolidates both into one CR, delivered as a Go-templated manifest file following the `skyhook-customizations` pattern.
+### Layer 1 — NFD NodeFeatureRule (`nfd-network-rule.yaml`)
 
-### 2. Keep AICR's external kai-scheduler
+**What:** A `NodeFeatureRule` CR that labels IB-capable nodes with `feature.node.kubernetes.io/pci-15b3.present=true`.
 
-- **kai-scheduler** = gang scheduling. Ensures all pods in a multinode deployment get scheduled together (all-or-nothing). Valuable for any GPU workload. AICR already installs it as a base component for all recipes.
-- **grove** = multinode orchestration. Manages `PodCliqueSets` — coordinated groups of pods across nodes for distributed inference. This is the multinode-specific piece.
+**Why:** The NicClusterPolicy (layer 2) uses this label as a nodeAffinity selector so its DaemonSets only run on ND-series nodes, not CPU nodes. The rule targets ConnectX-7 PCI device IDs `101c` and `101e` (vendor 15b3 = Mellanox/NVIDIA).
 
-Dynamo values set `global.kai-scheduler.install: false, enabled: true` — AICR manages kai-scheduler as a separate base component. Grove is set to `install: true` since AICR has no separate grove component and it's essential for the dynamo multinode use case.
+**How:** Delivered as a manifest file at `recipes/components/network-operator/manifests/nfd-network-rule.yaml`, applied with Helm hook weight 1 so it runs before the NicClusterPolicy (hook weight 5).
 
-Both are overridable at bundle time via `--set`:
-```bash
-# Let Dynamo install its own kai-scheduler instead
-aicr bundle -r recipe.yaml --set dynamoplatform:global.kai-scheduler.install=true
+The chart's built-in `nfd.deployNodeFeatureRules` targets generic Ethernet device classes (0200/0207); AICR's rule targets ConnectX-7 specifically. Set `nfd.deployNodeFeatureRules: false` in `values-aks.yaml` to suppress the broader match.
 
-# Disable grove for single-node inference
-aicr bundle -r recipe.yaml --set dynamoplatform:global.grove.install=false
-```
+### Layer 2 — NicClusterPolicy (`nic-cluster-policy-aks.yaml`)
 
-If someone doesn't want multinode at all, they'd use `--intent inference` without `--platform dynamo` (the plain inference recipe doesn't include dynamo).
+**What:** A `NicClusterPolicy` CR that tells the network-operator to deploy the RDMA stack on labeled nodes.
 
-### 3. Leave dead config in base `values.yaml` with TODO comment
+**Why:** The network-operator Helm chart installs only the CRD and the operator — it does not template a NicClusterPolicy. You create the CR and the operator reconciles it by deploying DaemonSets. On the working cluster this CR managed the MOFED driver (ofedDriver) and DOCA telemetry. The RDMA shared device plugin was a separate standalone DaemonSet; this PR folds it into the same CR.
 
-Don't remove `deployCR`/`nicClusterPolicy` from base network-operator values since it's unclear if other clouds rely on them or if they were an attempt to configure something we actually need. Add a TODO comment.
+**Contents:**
 
-### 4. GPU operator: only add RDMA-critical flags
+- `ofedDriver` — MOFED (DOCA) kernel driver. Version `doca3.2.0-25.10-1.2.8.0-2`. Includes the `OFED_BLACKLIST_MODULES_FILE` env var as a workaround for a kernel module race condition on AKS ([upstream issue](https://github.com/Mellanox/doca-driver-build/issues/52)).
+- `rdmaSharedDevicePlugin` — RDMA device plugin. Exposes the `rdma/hca_shared_devices_a` resource (resource name preserved from the standalone DaemonSet the cluster was using). `rdmaHcaMax: 1000` allows up to 1000 concurrent pod allocations per node. Targets vendor `15b3` (Mellanox), driver `mlx5_core`.
+- `docaTelemetryService` — DOCA telemetry sidecar. Matches what was on the cluster.
 
-The only flags that matter for InfiniBand RDMA are:
-- `driver.rdma.enabled=true` — already in base values
-- `driver.rdma.useHostMofed=true` — missing, must add to AKS values
-- `nfd.enabled=false` — prevents duplicate NFD DaemonSets (network-operator deploys its own)
+**How:** Delivered as a manifest file at `recipes/components/network-operator/manifests/nic-cluster-policy-aks.yaml`, applied with Helm hook weight 5.
 
-Other flags on the working cluster (`migManager.enabled=false`, `sandboxDevicePlugin.enabled=false`, `vfioManager.enabled=false`, `vgpuDeviceManager.enabled=false`) are just noise reduction for ND-H100 VMs — not functionally required. Skip them.
+### Layer 3 — ib-node-config DaemonSet (`ib-node-config-aks.yaml`)
 
-### 5. AKS-scoped changes only
+**What:** A DaemonSet that runs host-level IB setup: loads `ib_umad`, `rdma_ucm`, `ib_ucm` kernel modules, and sets `LimitMEMLOCK=infinity` on the containerd and kubelet systemd units.
 
-Other cloud dynamo overlays (EKS, GKE, etc.) are not touched in this change.
+**Why:** Without `LimitMEMLOCK=infinity` on the containerd unit, every container on the node inherits the default MEMLOCK limit (typically 64 KB). GPUDirect RDMA requires pinning large memory regions; pods would fail with permission errors unless they requested `IPC_LOCK`. Setting it at the node daemon layer means pods inherit unlimited MEMLOCK from containerd automatically — confirmed via live pod test (`cat /proc/self/limits` showed `RLIMIT_MEMLOCK: unlimited`).
 
-### 6. Out-of-band items (not in recipe)
+**Note on Skyhook:** The right long-term fix is to use Skyhook to apply these host settings declaratively. Skyhook does not yet support AKS (as of this writing). A `# TODO: Remove once Skyhook gains AKS support` comment marks this file.
+
+**Node selector change:** The working cluster used `kubernetes.azure.com/agentpool: ndh100pool` (cluster-specific pool name). This recipe uses `feature.node.kubernetes.io/pci-15b3.present: "true"` instead — portable across any AKS cluster with IB NICs, regardless of node pool name.
+
+### Layer 4 — GPU Operator: `useHostMofed` (`values-aks.yaml`)
+
+**What:** `driver.rdma.useHostMofed: true` in the GPU operator AKS values.
+
+**Why:** By default, GPU operator builds `nvidia-peermem` from source at runtime. With MOFED installed by network-operator (layer 2), the GPU operator should use the host-installed MOFED headers instead. Builds are flaky and slow; `useHostMofed: true` skips the build and links against the pre-installed MOFED.
+
+`nfd.enabled: false` is also set to prevent duplicate NFD DaemonSets — network-operator deploys NFD, and a second instance from GPU operator would conflict.
+
+**Other commented flags:** `migManager`, `vgpuDeviceManager`, `vfioManager`, `sandboxDevicePlugin` are set in the aks-rdma-infiniband reference but are not required for RDMA. They are included as commented-out values with a link to the reference repo.
+
+### Layer 5 — Network Operator version pin
+
+**What:** `version: "v26.1.0"` in `aks.yaml`.
+
+**Why:** Matches the version running on the working cluster. The `rdmaSharedDevicePlugin` image tag in the NicClusterPolicy is `network-operator-v26.1.0` — these must match.
+
+---
+
+## Dynamo Platform: v0.9 → v1.0.1
+
+### Why upgrade
+
+Dynamo v1.0 restructured subchart controls under `global.*` keys and made the operator responsible for injecting the NATS address into DynamoGraphDeployments. The v0.9 values file would silently apply to the wrong keys in v1.0, producing a broken deployment.
+
+### `dynamo-crds` component removed
+
+Dynamo v1.0 bundles CRD management in the platform chart itself (`upgradeCRD` behavior). A separate `dynamo-crds` component at v0.9 alongside a `dynamo-platform` at v1.0 would install incompatible CRDs. The `dynamo-crds` componentRef is removed from `h100-aks-ubuntu-inference-dynamo.yaml`.
+
+**Note:** `dynamo-crds` remains in `registry.yaml` unchanged — other non-AKS overlays may still reference it at v0.9.
+
+### Values rewrite (`components/dynamo-platform/values.yaml`)
+
+**What changed vs v0.9:**
+
+| Setting | v0.9 | v1.0.1 | Reason |
+|---------|------|--------|--------|
+| `dynamo-operator.controllerManager.manager.image.tag` | `"0.9.0"` | removed | Chart default is correct |
+| `dynamo-operator.controllerManager.kubeRbacProxy.image` | gcr.io override | removed | Upstream fixed gcr.io deprecation |
+| `grove.enabled` / `kai-scheduler.enabled` (top-level) | present | removed | Moved to `global.*` in v1.0 |
+| `global.grove.install` | — | `true` | Dynamo manages grove; no separate AICR grove component |
+| `global.kai-scheduler.install` | — | `false` | AICR installs kai-scheduler as a base component |
+| `global.kai-scheduler.enabled` | — | `true` | Tells Dynamo operator to use the external AICR-managed instance |
+| `global.etcd.install` | — | `false` | Kubernetes-native discovery; etcd not needed |
+| `dynamo-operator.nats.enabled: false` | present | removed | NATS IS used in v1.0 — operator injects natsAddress into workloads |
+| Prometheus endpoint | `kube-prometheus-prometheus:9090` | `kube-prometheus-kube-prome-prometheus:9090` | Service name derives from `fullnameOverride: kube-prometheus` in AICR's kube-prometheus-stack values |
+
+### NATS JetStream storage (`h100-aks-ubuntu-inference-dynamo.yaml`)
+
+NATS JetStream requires persistent storage for the message log. The `managed-csi` storage class override is kept in the overlay overrides so NATS uses Azure Disk Standard SSD (same storage class as Prometheus).
+
+### `registry.yaml`
+
+`dynamo-platform` defaultVersion bumped from `0.9.1` → `1.0.1`.
+
+---
+
+## Version Summary
+
+| Component | Before | After |
+|-----------|--------|-------|
+| gpu-operator | unversioned | v26.3.0 |
+| network-operator | unversioned | v26.1.0 |
+| kube-prometheus-stack | unversioned | 83.7.0 |
+| dynamo-platform | 0.9.1 (registry default) | 1.0.1 |
+
+---
+
+## Out-of-Band Items (not in this recipe)
 
 | Item | Why out-of-band |
 |------|----------------|
-| **Azure Lustre CSI** | AKS managed addon, cluster-specific endpoint/subscription. Install via `az aks update`. |
-| **MPI operator** | Provides `MPIJob` CRD for running NCCL all-reduce bandwidth tests across nodes. Dynamo doesn't use MPI for inference — it uses grove for multinode orchestration. Only needed for test/validation. |
-| **ib-node-config DaemonSet** | Host-level MEMLOCK workaround (loads ib_umad/rdma_ucm modules, sets MEMLOCK=unlimited on containerd/kubelet). May not be needed with v26 operators. Test first. |
-| **nvidia-peermem-reloader** | Loads nvidia-peermem kernel module. Likely redundant with `useHostMofed=true` on GPU operator v26.3.0. |
-| **AKSInfinibandSupport feature flag** | Infrastructure provisioning (`az feature register`), not recipe scope. |
+| Azure Lustre CSI | AKS managed addon with cluster-specific endpoint. Install via `az aks update`. |
+| MPI operator | Only needed for NCCL bandwidth tests, not for Dynamo inference. |
+| AKSInfinibandSupport feature flag | Infrastructure provisioning (`az feature register`), not recipe scope. |
 
-## Implementation Steps
+---
 
-### Step 1: Update GPU operator AKS values
+## References
 
-**File:** `recipes/components/gpu-operator/values-aks.yaml`
-
-Currently only sets `toolkit.enabled: false`. Add the two RDMA-critical settings:
-
-```yaml
-toolkit:
-  enabled: false
-
-# Use MOFED installed by network-operator instead of building nvidia-peermem.
-# Required for GPUDirect RDMA on AKS ND-series.
-driver:
-  rdma:
-    useHostMofed: true
-
-# Network operator deploys NFD; disable GPU operator's own to avoid duplicate DaemonSets.
-nfd:
-  enabled: false
-```
-
-### Step 2: Create NicClusterPolicy manifest
-
-**New file:** `recipes/components/network-operator/manifests/nic-cluster-policy-aks.yaml`
-
-Go-templated manifest (follows `skyhook-customizations/manifests/tuning.yaml` pattern) that creates the NicClusterPolicy CR with:
-- MOFED driver (doca3.2.0-25.10-1.2.8.0-2)
-- RDMA shared device plugin (`shared_ib`, rdmaHcaMax=63, vendor 15b3, linkType infiniband)
-- DOCA telemetry
-- nodeAffinity targeting `pci-15b3.present=true`
-- Helm post-install/post-upgrade hooks
-
-Reference configs:
-- `aks-rdma-infiniband/configs/nicclusterpolicy/base/nic.yaml` (MOFED + DOCA telemetry)
-- `aks-rdma-infiniband/configs/nicclusterpolicy/rdma-shared-device-plugin/rdma.yaml` (RDMA device plugin)
-
-### Step 3: Create NFD NodeFeatureRule manifest
-
-**New file:** `recipes/components/network-operator/manifests/nfd-network-rule.yaml`
-
-Go-templated manifest that creates a NodeFeatureRule for Mellanox PCI devices (IDs `101c`, `101e` = ConnectX-7 NICs). Labels nodes with `feature.node.kubernetes.io/pci-15b3.present=true`. This label is what the NicClusterPolicy nodeAffinity uses to target only IB-capable nodes.
-
-Reference: `aks-rdma-infiniband/tests/setup-infra/network-operator-nfd.yaml` (also deployed on the working cluster by the setup script).
-
-### Step 4: Create AKS network operator values file
-
-**New file:** `recipes/components/network-operator/values-aks.yaml`
-
-Minimal values for AKS — the NicClusterPolicy is a manifest, so values only configure the operator itself:
-
-```yaml
-operator:
-  fullnameOverride: network-operator
-  tolerations:
-    - operator: Exists
-
-nfd:
-  enabled: false
-  deployNodeFeatureRules: false    # AICR deploys targeted NFD rule via manifest
-
-sriovNetworkOperator:
-  enabled: false
-
-# nvIpam and secondaryNetwork are for Ethernet secondary interfaces.
-# Not needed for InfiniBand RDMA workloads.
-nvIpam:
-  enabled: false
-
-secondaryNetwork:
-  deploy: false
-```
-
-### Step 5: Add TODO comment to base network-operator values
-
-**File:** `recipes/components/network-operator/values.yaml`
-
-Add a comment noting `deployCR`, `nicClusterPolicy`, `nvIpam`, `secondaryNetwork` are not consumed by the upstream Helm chart and may need investigation.
-
-### Step 6: Update `aks.yaml` overlay
-
-**File:** `recipes/overlays/aks.yaml`
-
-Changes to componentRefs:
-- `gpu-operator`: add `version: "v26.3.0"`
-- `network-operator`: version `"25.1.0"` → `"v26.1.0"`, valuesFile → `values-aks.yaml`, add `manifestFiles` for NicClusterPolicy and NFD rule
-- `kube-prometheus-stack`: add `version: "83.7.0"`
-
-```yaml
-- name: gpu-operator
-  type: Helm
-  version: "v26.3.0"
-  valuesFile: components/gpu-operator/values-aks.yaml
-
-- name: network-operator
-  type: Helm
-  source: https://helm.ngc.nvidia.com/nvidia
-  version: "v26.1.0"
-  valuesFile: components/network-operator/values-aks.yaml
-  manifestFiles:
-    - components/network-operator/manifests/nic-cluster-policy-aks.yaml
-    - components/network-operator/manifests/nfd-network-rule.yaml
-  dependencyRefs:
-    - cert-manager
-
-- name: kube-prometheus-stack
-  type: Helm
-  version: "83.7.0"
-  overrides:
-    ...  # existing storage overrides unchanged
-```
-
-### Step 7: Update dynamo overlay
-
-**File:** `recipes/overlays/h100-aks-ubuntu-inference-dynamo.yaml`
-
-- `dynamo-platform` version: `"0.9.0"` → `"1.0.1"`
-- Keep `dynamo-crds` at `"0.9.0"` (no 1.0 CRD chart exists; platform bundles CRDs via `upgradeCRD`)
-
-### Step 8: Rewrite dynamo-platform values for v1.0.1
-
-**File:** `recipes/components/dynamo-platform/values.yaml`
-
-Per `docs/bugs/dynamo-v1.0-bump.md`. The 1.0 release restructured subchart controls under `global.*` keys:
-
-```yaml
-dynamo-operator:
-  upgradeCRD: true
-  discoveryBackend: "kubernetes"
-  nats:
-    enabled: false
-  dynamo:
-    metrics:
-      prometheusEndpoint: "http://kube-prometheus-prometheus.monitoring.svc.cluster.local:9090"
-
-global:
-  grove:
-    install: true           # Let Dynamo manage grove (no separate AICR grove component)
-    enabled: true
-  kai-scheduler:
-    install: false           # AICR manages kai-scheduler as a separate base component
-    enabled: true            # Tell Dynamo operator to use the external kai-scheduler
-  etcd:
-    install: false           # Kubernetes-native discovery replaces etcd
-
-nats:
-  enabled: false             # ZMQ event plane replaces NATS
-```
-
-**Removed from v0.9 values:**
-- `dynamo-operator.controllerManager.manager.image.tag` — 1.0 chart default is correct
-- `dynamo-operator.controllerManager.kubeRbacProxy.image` overrides — gcr.io deprecation fixed upstream
-- Old top-level `grove.enabled`, `kai-scheduler.enabled` — moved to `global.*`
-
-### Step 9: Update registry.yaml
-
-**File:** `recipes/registry.yaml`
-
-- `dynamo-platform` defaultVersion: `"0.9.1"` → `"1.0.1"`
-
-## Verification
-
-```bash
-# 1. Unit tests
-make test
-
-# 2. Recipe compilation — verify bundle output
-aicr recipe --service aks --accelerator h100 --intent inference \
-  --os ubuntu --platform dynamo -o /tmp/recipe.yaml
-
-# 3. Bundle generation — inspect outputs
-aicr bundle -r /tmp/recipe.yaml -o /tmp/bundles
-cat /tmp/bundles/gpu-operator/values.yaml        # verify useHostMofed, nfd disabled
-cat /tmp/bundles/network-operator/values.yaml     # verify AKS values
-ls /tmp/bundles/network-operator/manifests/       # verify NicClusterPolicy + NFD rule
-cat /tmp/bundles/dynamo-platform/values.yaml      # verify global.* keys
-
-# 4. Lint
-make lint
-
-# 5. Full qualify gate
-make qualify
-```
+- [Azure aks-rdma-infiniband reference](https://github.com/Azure/aks-rdma-infiniband)
+- [Azure network-operator configuration guide](https://azure.github.io/aks-rdma-infiniband/configurations/network-operator)
+- [DOCA driver build race condition workaround](https://github.com/Mellanox/doca-driver-build/issues/52)

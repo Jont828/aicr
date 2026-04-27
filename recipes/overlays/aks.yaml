@@ -42,17 +42,24 @@ spec:
     # AKS pre-installs NVIDIA container toolkit; disable toolkit installation
     - name: gpu-operator
       type: Helm
+      version: "v26.3.0"
       valuesFile: components/gpu-operator/values-aks.yaml
 
-    # NVIDIA Network Operator with SR-IOV Device Plugin for InfiniBand RDMA.
-    # AKS ND-series VMs have InfiniBand hardware, but the Network Operator is
-    # required to expose NICs as rdma/ib Kubernetes resources via SR-IOV Device Plugin.
+    # NVIDIA Network Operator for InfiniBand RDMA on AKS ND-series.
+    # Manifests deliver the full RDMA stack that the Helm chart does not template:
+    #   - NicClusterPolicy: MOFED driver, RDMA shared device plugin, DOCA telemetry
+    #   - NFD NodeFeatureRule: labels IB-capable nodes (pci-15b3.present=true)
+    #   - ib-node-config: host MEMLOCK limits so workloads inherit unlimited rlimit
     # Reference: https://azure.github.io/aks-rdma-infiniband/configurations/network-operator
     - name: network-operator
       type: Helm
       source: https://helm.ngc.nvidia.com/nvidia
-      version: "25.1.0"
-      valuesFile: components/network-operator/values.yaml
+      version: "v26.1.0"
+      valuesFile: components/network-operator/values-aks.yaml
+      manifestFiles:
+        - components/network-operator/manifests/nfd-network-rule.yaml
+        - components/network-operator/manifests/nic-cluster-policy-aks.yaml
+        - components/network-operator/manifests/ib-node-config-aks.yaml
       dependencyRefs:
         - nfd
         - cert-manager
@@ -60,6 +67,7 @@ spec:
     # Prometheus persistent storage — Azure Disk Standard SSD
     - name: kube-prometheus-stack
       type: Helm
+      version: "83.7.0"
       overrides:
         prometheus:
           prometheusSpec:
