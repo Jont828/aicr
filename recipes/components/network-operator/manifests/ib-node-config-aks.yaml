@@ -70,6 +70,18 @@ spec:
         - |
           echo "=== IB Node Configuration ==="
 
+          # Short-circuit: if all drop-ins and module configs are already present,
+          # skip setup to avoid restarting kubelet/containerd and risking a restart loop.
+          if nsenter -t 1 -m -u -i -n -- sh -c '
+            [ -f /etc/systemd/system/containerd.service.d/memlock.conf ] &&
+            [ -f /etc/systemd/system/kubelet.service.d/memlock.conf ] &&
+            [ -f /etc/modules-load.d/ib-umad.conf ] &&
+            [ -f /etc/security/limits.d/99-ib-memlock.conf ]
+          '; then
+            echo "=== All configs already present, skipping setup (idempotent exit) ==="
+            exit 0
+          fi
+
           nsenter -t 1 -m -u -i -n -- modprobe ib_umad
           nsenter -t 1 -m -u -i -n -- modprobe rdma_ucm 2>/dev/null || true
           nsenter -t 1 -m -u -i -n -- modprobe ib_ucm 2>/dev/null || true
