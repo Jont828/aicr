@@ -38,8 +38,8 @@ constraints:
 componentRefs: ## alphabetically sorted
   - name: cert-manager
   - name: dynamo-platform
-  - name: grove
   - name: gpu-operator
+  - name: grove
   - name: k8s-ephemeral-storage-metrics
   - name: kai-scheduler
   - name: kgateway
