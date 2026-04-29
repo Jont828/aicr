@@ -44,6 +44,7 @@ spec:
       type: Helm
       source: oci://ghcr.io/ai-dynamo/grove
       version: "v0.1.0-alpha.6"
+      valuesFile: components/grove/values.yaml
 
     - name: dynamo-platform
       type: Helm
