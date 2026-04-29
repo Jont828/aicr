@@ -13,9 +13,10 @@
 # limitations under the License.
 
 # Dynamo Platform Helm values (v1.0.2)
-# NVIDIA Dynamo inference serving platform: operator and grove.
+# NVIDIA Dynamo inference serving platform operator.
 # Provides OpenAI-compatible endpoints, KV-cache-aware routing,
 # disaggregated prefill/decode, and SLA-driven autoscaling.
+# Grove is installed as a separate AICR component (see recipes/components/grove/).
 
 # --- Global subchart controls (new in 1.0) ---
 # Disable etcd — Kubernetes-native discovery replaces it for the operator.
