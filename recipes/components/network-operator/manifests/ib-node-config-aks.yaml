@@ -70,19 +70,30 @@ spec:
         - |
           echo "=== IB Node Configuration ==="
 
-          # Short-circuit: if all drop-ins and module configs are already present,
-          # skip setup to avoid restarting kubelet/containerd and risking a restart loop.
+          # Short-circuit: verify both config files AND runtime state.
+          # Files alone are insufficient — a prior run may have crashed between
+          # writing drop-ins and completing the service restarts.
           if nsenter -t 1 -m -u -i -n -- sh -c '
             [ -f /etc/systemd/system/containerd.service.d/memlock.conf ] &&
             [ -f /etc/systemd/system/kubelet.service.d/memlock.conf ] &&
             [ -f /etc/modules-load.d/ib-umad.conf ] &&
             [ -f /etc/security/limits.d/99-ib-memlock.conf ]
+          ' && \
+          nsenter -t 1 -m -u -i -n -- sh -c '
+            systemctl is-active containerd >/dev/null 2>&1 &&
+            systemctl is-active kubelet >/dev/null 2>&1 &&
+            [ "$(systemctl show containerd -p LimitMEMLOCK --value)" = "infinity" ] &&
+            [ "$(systemctl show kubelet -p LimitMEMLOCK --value)" = "infinity" ]
           '; then
-            echo "=== All configs already present, skipping setup (idempotent exit) ==="
+            echo "=== Config files present and services running with LimitMEMLOCK=infinity, skipping setup ==="
             exit 0
           fi
 
-          nsenter -t 1 -m -u -i -n -- modprobe ib_umad
+          # Load kernel modules — ib_umad is required; rdma_ucm and ib_ucm are
+          # optional (not present on all kernel builds).
+          if ! nsenter -t 1 -m -u -i -n -- modprobe ib_umad; then
+            echo "FAIL: could not load ib_umad" >&2; exit 1
+          fi
           nsenter -t 1 -m -u -i -n -- modprobe rdma_ucm 2>/dev/null || true
           nsenter -t 1 -m -u -i -n -- modprobe ib_ucm 2>/dev/null || true
           nsenter -t 1 -m -u -i -n -- lsmod | grep ib_umad && echo "OK: ib_umad" || echo "FAIL: ib_umad"
@@ -94,14 +105,20 @@ spec:
           nsenter -t 1 -m -u -i -n -- sh -c 'mkdir -p /etc/systemd/system/containerd.service.d && printf "[Service]\nLimitMEMLOCK=infinity\n" > /etc/systemd/system/containerd.service.d/memlock.conf'
           nsenter -t 1 -m -u -i -n -- sh -c 'mkdir -p /etc/systemd/system/kubelet.service.d && printf "[Service]\nLimitMEMLOCK=infinity\n" > /etc/systemd/system/kubelet.service.d/memlock.conf'
 
-          nsenter -t 1 -m -u -i -n -- systemctl daemon-reload
-          nsenter -t 1 -m -u -i -n -- systemctl restart containerd
-          nsenter -t 1 -m -u -i -n -- systemctl restart kubelet
+          if ! nsenter -t 1 -m -u -i -n -- systemctl daemon-reload; then
+            echo "FAIL: systemctl daemon-reload" >&2; exit 1
+          fi
+          if ! nsenter -t 1 -m -u -i -n -- systemctl restart containerd; then
+            echo "FAIL: systemctl restart containerd" >&2; exit 1
+          fi
+          if ! nsenter -t 1 -m -u -i -n -- systemctl restart kubelet; then
+            echo "FAIL: systemctl restart kubelet" >&2; exit 1
+          fi
 
           sleep 10
 
-          nsenter -t 1 -m -u -i -n -- systemctl is-active containerd && echo "OK: containerd active" || echo "FAIL: containerd"
-          nsenter -t 1 -m -u -i -n -- systemctl is-active kubelet && echo "OK: kubelet active" || echo "FAIL: kubelet"
+          nsenter -t 1 -m -u -i -n -- systemctl is-active containerd && echo "OK: containerd active" || { echo "FAIL: containerd not active after restart" >&2; exit 1; }
+          nsenter -t 1 -m -u -i -n -- systemctl is-active kubelet && echo "OK: kubelet active" || { echo "FAIL: kubelet not active after restart" >&2; exit 1; }
 
           echo "=== Setup Complete ==="
       containers:
@@ -110,4 +127,4 @@ spec:
         command:
         - sh
         - -c
-        - echo IB node config active; sleep infinity
+        - echo IB node config active; while true; do sleep 86400; done

@@ -44,6 +44,10 @@ spec:
     matchFeatures:
     - feature: pci.device
       matchExpressions:
+        vendor:
+          op: In
+          value:
+          - "15b3"
         device:
           op: In
           value:

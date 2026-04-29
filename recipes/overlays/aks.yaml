@@ -44,6 +44,8 @@ spec:
       type: Helm
       version: "v26.3.0"
       valuesFile: components/gpu-operator/values-aks.yaml
+      dependencyRefs:
+        - network-operator
 
     # NVIDIA Network Operator for InfiniBand RDMA on AKS ND-series.
     # Manifests deliver the full RDMA stack that the Helm chart does not template:
