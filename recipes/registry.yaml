@@ -95,6 +95,13 @@ components:
           - daemonsets.nodeSelector
         tolerationPaths:
           - daemonsets.tolerations
+    validations:
+      - function: CheckHostMofedWithoutNetworkOperator
+        severity: warning
+        conditions:
+          service:
+            - aks
+        message: "Add --set gpuoperator:driver.rdma.useHostMofed=false when disabling network-operator."
 
   - name: network-operator
     displayName: network-operator

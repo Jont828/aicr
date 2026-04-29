@@ -31,6 +31,17 @@
 #       setup is not yet included. Track upstream progress and replace this
 #       DaemonSet with a Nodewright SkyhookPackage once available.
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ib-node-config-settings
+  namespace: kube-system
+data:
+  # Set to "false" to skip IB host setup on new/restarted nodes without
+  # removing the DaemonSet. After patching, restart the DaemonSet to apply:
+  #   kubectl rollout restart ds/ib-node-config -n kube-system
+  enabled: "true"
+---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -59,16 +70,31 @@ spec:
         feature.node.kubernetes.io/pci-15b3.present: "true"
       tolerations:
       - operator: Exists
+      volumes:
+      - name: ib-node-config-settings
+        configMap:
+          name: ib-node-config-settings
       initContainers:
       - name: ib-setup
         image: busybox:1.36
         securityContext:
           privileged: true
+        volumeMounts:
+        - name: ib-node-config-settings
+          mountPath: /etc/ib-node-config
+          readOnly: true
         command:
         - sh
         - -c
         - |
           echo "=== IB Node Configuration ==="
+
+          # Kill switch: skip host setup when disabled via ConfigMap.
+          ENABLED=$(cat /etc/ib-node-config/enabled 2>/dev/null || echo "true")
+          if [ "$ENABLED" != "true" ]; then
+            echo "=== IB node config disabled via ConfigMap, skipping ==="
+            exit 0
+          fi
 
           # Short-circuit: verify both config files AND runtime state.
           # Files alone are insufficient — a prior run may have crashed between

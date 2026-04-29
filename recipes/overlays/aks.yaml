@@ -53,6 +53,10 @@ spec:
     #   - NFD NodeFeatureRule: labels IB-capable nodes (pci-15b3.present=true)
     #   - ib-node-config: host MEMLOCK limits so workloads inherit unlimited rlimit
     # Reference: https://azure.github.io/aks-rdma-infiniband/configurations/network-operator
+    #
+    # RDMA is enabled by default. To opt out at bundle time:
+    #   --set networkoperator:enabled=false \
+    #   --set gpuoperator:driver.rdma.useHostMofed=false
     - name: network-operator
       type: Helm
       source: https://helm.ngc.nvidia.com/nvidia

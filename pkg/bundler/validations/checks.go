@@ -30,6 +30,7 @@ func init() {
 	// This is called automatically when the package is imported
 	registerCheck("CheckWorkloadSelectorMissing", CheckWorkloadSelectorMissing)
 	registerCheck("CheckAcceleratedSelectorMissing", CheckAcceleratedSelectorMissing)
+	registerCheck("CheckHostMofedWithoutNetworkOperator", CheckHostMofedWithoutNetworkOperator)
 }
 
 // registerCheck is a helper to register validation functions from checks.go.
@@ -164,4 +165,48 @@ func checkConditions(recipeResult *recipe.RecipeResult, conditions map[string][]
 	}
 
 	return true
+}
+
+// CheckHostMofedWithoutNetworkOperator warns when network-operator is disabled
+// via --set but gpu-operator still has driver.rdma.useHostMofed=true (the
+// AKS default). Without network-operator, no host MOFED is present and
+// useHostMofed should be set to false.
+func CheckHostMofedWithoutNetworkOperator(ctx context.Context, componentName string, recipeResult *recipe.RecipeResult, bundlerConfig *config.Config, conditions map[string][]string) ([]string, []error) {
+	if bundlerConfig == nil {
+		return nil, nil
+	}
+
+	// Check conditions (e.g., service: aks)
+	if !checkConditions(recipeResult, conditions) {
+		return nil, nil
+	}
+
+	// Check if network-operator is disabled via --set
+	overrides := bundlerConfig.ValueOverrides()
+	netOpOverrides := overrides["networkoperator"]
+	if netOpOverrides == nil {
+		return nil, nil
+	}
+
+	enabledVal, hasEnabled := netOpOverrides["enabled"]
+	if !hasEnabled || enabledVal != "false" {
+		return nil, nil
+	}
+
+	// network-operator is disabled — check if useHostMofed is overridden to false
+	gpuOpOverrides := overrides["gpuoperator"]
+	if gpuOpOverrides != nil {
+		if mofedVal, ok := gpuOpOverrides["driver.rdma.useHostMofed"]; ok && mofedVal == "false" {
+			return nil, nil
+		}
+	}
+
+	msg := fmt.Sprintf(
+		"%s: network-operator is disabled but driver.rdma.useHostMofed is not set to false"+
+			" — add --set gpuoperator:driver.rdma.useHostMofed=false to avoid MOFED-related errors",
+		componentName,
+	)
+	slog.Warn(msg, "component", componentName)
+
+	return []string{msg}, nil
 }

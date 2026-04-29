@@ -35,10 +35,13 @@ driver:
   rdma:
     # Use MOFED installed by network-operator instead of building nvidia-peermem
     # from source. Required for GPUDirect RDMA on AKS ND-series.
+    # Set to false when disabling network-operator (no host MOFED present):
+    #   --set gpuoperator:driver.rdma.useHostMofed=false
     useHostMofed: true
 
-# Network-operator deploys its own NFD instance; disable GPU operator's copy
-# to avoid running duplicate NFD DaemonSets on every node.
+# NFD is deployed as a standalone shared component from the base recipe.
+# Both network-operator and gpu-operator disable their sub-chart copies
+# to avoid running duplicate NFD DaemonSets.
 nfd:
   enabled: false
 
