@@ -79,7 +79,7 @@ jobs:
               - 'recipes/mixins/platform-inference.yaml'
               - 'recipes/components/kgateway/**'
               - 'recipes/components/kgateway-crds/**'
-              - 'recipes/components/dynamo-crds/**'
+              - 'recipes/components/grove/**'
               - 'recipes/components/dynamo-platform/**'
               - 'recipes/components/prometheus-adapter/**'
               - 'recipes/overlays/kind.yaml'

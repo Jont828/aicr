@@ -39,8 +39,8 @@ componentRefs: ## alphabetically sorted
   - name: aws-ebs-csi-driver
   - name: aws-efa
   - name: cert-manager
-  - name: dynamo-crds
   - name: dynamo-platform
+  - name: grove
   - name: gpu-operator
   - name: k8s-ephemeral-storage-metrics
   - name: kai-scheduler
@@ -57,7 +57,7 @@ deploymentOrder:
   - aws-ebs-csi-driver
   - aws-efa
   - cert-manager
-  - dynamo-crds
+  - grove
   - kgateway-crds
   - kgateway
   - kube-prometheus-stack
