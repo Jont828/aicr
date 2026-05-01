@@ -433,7 +433,7 @@ func TestMergeComponentRef_AdvancedFields(t *testing.T) {
 		}
 	})
 
-	t.Run("dependencyRefs replaced by overlay", func(t *testing.T) {
+	t.Run("dependencyRefs additive dedup merge", func(t *testing.T) {
 		base := ComponentRef{
 			Name:           "test",
 			DependencyRefs: []string{"dep-a"},
@@ -443,8 +443,23 @@ func TestMergeComponentRef_AdvancedFields(t *testing.T) {
 			DependencyRefs: []string{"dep-b", "dep-c"},
 		}
 		result := mergeComponentRef(base, overlay)
-		if len(result.DependencyRefs) != 2 {
-			t.Errorf("dependencyRefs len = %d, want 2", len(result.DependencyRefs))
+		if len(result.DependencyRefs) != 3 {
+			t.Errorf("dependencyRefs len = %d, want 3", len(result.DependencyRefs))
+		}
+	})
+
+	t.Run("dependencyRefs dedup on merge", func(t *testing.T) {
+		base := ComponentRef{
+			Name:           "test",
+			DependencyRefs: []string{"dep-a", "dep-b"},
+		}
+		overlay := ComponentRef{
+			Name:           "test",
+			DependencyRefs: []string{"dep-b", "dep-c"},
+		}
+		result := mergeComponentRef(base, overlay)
+		if len(result.DependencyRefs) != 3 {
+			t.Errorf("dependencyRefs len = %d, want 3", len(result.DependencyRefs))
 		}
 	})
 
