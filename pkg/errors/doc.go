@@ -33,6 +33,9 @@
 //   - ErrCodeRateLimitExceeded: Rate limit exceeded (HTTP 429)
 //   - ErrCodeMethodNotAllowed: HTTP method not allowed (HTTP 405)
 //   - ErrCodeUnavailable: Service temporarily unavailable (HTTP 503)
+//   - ErrCodeConflict: Resource state conflict, e.g., already exists or
+//     version mismatch (HTTP 409). Distinct from ErrCodeInvalidRequest
+//     because the request itself is well-formed.
 //
 // # Usage
 //
@@ -70,7 +73,24 @@
 //	    }
 //	}
 //
+// # Code-Based Matching with errors.Is
+//
+// StructuredError.Is reports a match when the target is also a
+// *StructuredError with the same Code. This enables idiomatic
+// errors.Is checks without reaching for errors.As + manual code
+// comparison:
+//
+//	if errors.Is(err, errors.New(errors.ErrCodeNotFound, "")) {
+//	    // err (or any error in its Unwrap chain) carries
+//	    // ErrCodeNotFound.
+//	}
+//
+// Message and Cause are not compared; for cause-chain matching, rely
+// on Unwrap as usual.
+//
 // # Thread Safety
 //
 // All functions in this package are thread-safe and can be called concurrently.
+// Note: StructuredError.Context is a mutable map; if consumers mutate it
+// post-construction, that mutation is the caller's responsibility.
 package errors

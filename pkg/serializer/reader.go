@@ -139,6 +139,13 @@ func NewReader(format Format, input io.Reader) (*Reader, error) {
 //	if err != nil { panic(err) }
 //	defer reader.Close()
 func NewFileReader(format Format, filePath string) (*Reader, error) {
+	return NewFileReaderWithContext(context.Background(), format, filePath)
+}
+
+// NewFileReaderWithContext is the context-aware variant of NewFileReader.
+// The context only affects the URL-download path; local file opens are fast
+// and synchronous so do not consult ctx.
+func NewFileReaderWithContext(ctx context.Context, format Format, filePath string) (*Reader, error) {
 	if format.IsUnknown() {
 		return nil, errors.New(errors.ErrCodeInvalidRequest, fmt.Sprintf("unknown format: %s", format))
 	}
@@ -159,16 +166,25 @@ func NewFileReader(format Format, filePath string) (*Reader, error) {
 		name := fmt.Sprintf("aicr-%d.tmp", time.Now().UnixNano())
 		tempFilePath := filepath.Join(os.TempDir(), name)
 		httpReader := NewHTTPReader()
-		if err = httpReader.Download(filePath, tempFilePath); err != nil {
-			return nil, errors.Wrap(errors.ErrCodeInternal, "failed to download remote file", err)
+		// Bound the download even when the caller supplied a context without
+		// a deadline, so an unresponsive server cannot hang indefinitely.
+		dlCtx, cancel := context.WithTimeout(ctx, defaults.HTTPClientTimeout)
+		defer cancel()
+		if err = httpReader.DownloadWithContext(dlCtx, filePath, tempFilePath); err != nil {
+			return nil, errors.PropagateOrWrap(err, errors.ErrCodeUnavailable, "failed to download remote file")
 		}
 		file, err = os.Open(tempFilePath)
 	} else {
 		file, err = os.Open(filepath.Clean(filePath)) //nolint:gosec // G703 -- path from CLI arg or config
 	}
 
-	// Handle file open error
+	// Handle file open error. Distinguish ENOENT (NotFound) from other I/O
+	// failures so callers can map "file missing" to a 4xx and other failures
+	// to a 5xx.
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, errors.Wrap(errors.ErrCodeNotFound, "file not found", err)
+		}
 		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to open file", err)
 	}
 

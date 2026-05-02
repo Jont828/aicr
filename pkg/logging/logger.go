@@ -21,8 +21,11 @@ import (
 )
 
 const (
-	// envVarLogLevel is the environment variable name for setting the log level.
-	envVarLogLevel = "LOG_LEVEL"
+	// envVarLogLevel is the AICR-namespaced env var name for the log level.
+	// Only the prefixed name is honored; an unprefixed LOG_LEVEL was briefly
+	// documented as a legacy fallback but removed because it's ambiguous
+	// (collides with shells, CI runners, and unrelated tooling).
+	envVarLogLevel = "AICR_LOG_LEVEL"
 )
 
 func newStructuredLogger(module, version, level string) *slog.Logger {
@@ -63,7 +66,7 @@ func SetDefaultLoggerWithLevel(module, version, level string) {
 //   - module: The name of the module/application using the logger.
 //   - version: The version of the module/application (e.g., "v1.0.0").
 //
-// Derives log level from the LOG_LEVEL environment variable.
+// Derives log level from the AICR_LOG_LEVEL environment variable.
 func SetDefaultStructuredLogger(module, version string) {
 	SetDefaultStructuredLoggerWithLevel(module, version, os.Getenv(envVarLogLevel))
 }

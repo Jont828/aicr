@@ -775,11 +775,13 @@ func LoadCriteriaFromFileWithContext(ctx context.Context, path string) (*Criteri
 		return loadCriteriaFromHTTPWithContext(ctx, path)
 	}
 
-	// For local files, use the existing FromFile which doesn't need context
+	// For local files, use the existing FromFile which doesn't need context.
+	// FromFile returns coded errors (NotFound for missing path, InvalidRequest
+	// for parse failures); preserve the inner code rather than re-wrapping.
 	//nolint:contextcheck // Local file reads don't require context; HTTP paths use loadCriteriaFromHTTPWithContext
 	raw, err := serializer.FromFile[rawRecipeCriteria](path)
 	if err != nil {
-		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to load criteria file", err)
+		return nil, err
 	}
 
 	// Validate kind and apiVersion
@@ -798,20 +800,23 @@ func loadCriteriaFromHTTPWithContext(ctx context.Context, url string) (*Criteria
 	httpReader := serializer.NewHTTPReader()
 	data, err := httpReader.ReadWithContext(ctx, url)
 	if err != nil {
-		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to read criteria from URL", err)
+		// ReadWithContext returns properly-coded errors: ErrCodeInvalidRequest
+		// for oversized bodies, ErrCodeUnavailable for transport failures.
+		// Preserve the inner code rather than overwriting it.
+		return nil, errors.PropagateOrWrap(err, errors.ErrCodeUnavailable, "failed to read criteria from URL")
 	}
 
 	// Determine format from URL extension
 	format := serializer.FormatFromPath(url)
 	reader, err := serializer.NewReader(format, strings.NewReader(string(data)))
 	if err != nil {
-		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to create reader for criteria data", err)
+		return nil, errors.PropagateOrWrap(err, errors.ErrCodeInvalidRequest, "failed to create reader for criteria data")
 	}
 	defer reader.Close()
 
 	var raw rawRecipeCriteria
 	if err := reader.Deserialize(&raw); err != nil {
-		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to deserialize criteria", err)
+		return nil, errors.PropagateOrWrap(err, errors.ErrCodeInvalidRequest, "failed to deserialize criteria")
 	}
 
 	// Validate kind and apiVersion

@@ -129,6 +129,14 @@ const (
 	HTTPExpectContinueTimeout = 1 * time.Second
 )
 
+// Trust / TUF timeouts for Sigstore trust-root refresh.
+const (
+	// TUFUpdateTimeout bounds the total time for Sigstore TUF metadata refresh.
+	// TUF downloads several metadata files (root, timestamp, snapshot, targets)
+	// from a CDN; allow more headroom than a single HTTP request.
+	TUFUpdateTimeout = 2 * time.Minute
+)
+
 // ConfigMap timeouts for Kubernetes ConfigMap operations.
 const (
 	// ConfigMapWriteTimeout is the timeout for writing to ConfigMaps.
@@ -380,6 +388,23 @@ const (
 	// inputs; 1 MiB is well above any legitimate payload while bounding
 	// per-request memory.
 	MaxRecipePOSTBytes int64 = 1 * 1024 * 1024 // 1 MiB
+
+	// ServerMaxBodyBytes is the default per-request body cap applied as a
+	// fallback when a handler does not configure its own MaxBytesReader.
+	// Derived from MaxBundlePOSTBytes (the largest legitimate body) so the
+	// fallback cannot drift if the bundle limit is ever retuned.
+	ServerMaxBodyBytes = MaxBundlePOSTBytes
+)
+
+// Server-wide handler defaults.
+const (
+	// ServerHandlerTimeout is the default per-request handler timeout used by
+	// the timeout middleware when a handler-specific timeout is not provided.
+	ServerHandlerTimeout = 30 * time.Second
+
+	// ServerRateLimitWindow is the rate-limit window length advertised to
+	// clients via X-RateLimit-Reset. Mirrors the limiter's per-second model.
+	ServerRateLimitWindow = 1 * time.Second
 )
 
 // Server rate limiting constants.
