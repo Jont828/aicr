@@ -17,6 +17,7 @@ package validations
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/NVIDIA/aicr/pkg/bundler/config"
@@ -262,6 +263,144 @@ func TestCheckAcceleratedSelectorMissing(t *testing.T) {
 			if tt.wantWarningMsg != "" && len(warnings) > 0 {
 				if !slices.Contains(warnings, tt.wantWarningMsg) {
 					t.Errorf("CheckAcceleratedSelectorMissing() warning message = %v, want to contain %q", warnings, tt.wantWarningMsg)
+				}
+			}
+		})
+	}
+}
+
+func TestCheckHostMofedWithoutNetworkOperator(t *testing.T) {
+	tests := []struct {
+		name           string
+		componentName  string
+		recipeResult   *recipe.RecipeResult
+		bundlerConfig  *config.Config
+		conditions     map[string][]string
+		wantWarnings   int
+		wantErrors     int
+		wantWarningMsg string
+	}{
+		{
+			name:          "network-operator disabled without useHostMofed override",
+			componentName: "gpu-operator",
+			recipeResult: &recipe.RecipeResult{
+				ComponentRefs: []recipe.ComponentRef{
+					{Name: "gpu-operator"},
+					{Name: "network-operator"},
+				},
+				Criteria: &recipe.Criteria{
+					Service: recipe.CriteriaServiceAKS,
+				},
+			},
+			bundlerConfig: config.NewConfig(
+				config.WithValueOverrides(map[string]map[string]string{
+					"networkoperator": {"enabled": "false"},
+				}),
+			),
+			conditions:     map[string][]string{"service": {"aks"}},
+			wantWarnings:   1,
+			wantErrors:     0,
+			wantWarningMsg: "network-operator is disabled but driver.rdma.useHostMofed is not set to false",
+		},
+		{
+			name:          "network-operator disabled with useHostMofed=false",
+			componentName: "gpu-operator",
+			recipeResult: &recipe.RecipeResult{
+				ComponentRefs: []recipe.ComponentRef{
+					{Name: "gpu-operator"},
+					{Name: "network-operator"},
+				},
+				Criteria: &recipe.Criteria{
+					Service: recipe.CriteriaServiceAKS,
+				},
+			},
+			bundlerConfig: config.NewConfig(
+				config.WithValueOverrides(map[string]map[string]string{
+					"networkoperator": {"enabled": "false"},
+					"gpuoperator":     {"driver.rdma.useHostMofed": "false"},
+				}),
+			),
+			conditions:   map[string][]string{"service": {"aks"}},
+			wantWarnings: 0,
+			wantErrors:   0,
+		},
+		{
+			name:          "network-operator enabled (default)",
+			componentName: "gpu-operator",
+			recipeResult: &recipe.RecipeResult{
+				ComponentRefs: []recipe.ComponentRef{
+					{Name: "gpu-operator"},
+					{Name: "network-operator"},
+				},
+				Criteria: &recipe.Criteria{
+					Service: recipe.CriteriaServiceAKS,
+				},
+			},
+			bundlerConfig: config.NewConfig(),
+			conditions:    map[string][]string{"service": {"aks"}},
+			wantWarnings:  0,
+			wantErrors:    0,
+		},
+		{
+			name:          "non-AKS service",
+			componentName: "gpu-operator",
+			recipeResult: &recipe.RecipeResult{
+				ComponentRefs: []recipe.ComponentRef{
+					{Name: "gpu-operator"},
+				},
+				Criteria: &recipe.Criteria{
+					Service: recipe.CriteriaServiceEKS,
+				},
+			},
+			bundlerConfig: config.NewConfig(
+				config.WithValueOverrides(map[string]map[string]string{
+					"networkoperator": {"enabled": "false"},
+				}),
+			),
+			conditions:   map[string][]string{"service": {"aks"}},
+			wantWarnings: 0,
+			wantErrors:   0,
+		},
+		{
+			name:          "nil config",
+			componentName: "gpu-operator",
+			recipeResult: &recipe.RecipeResult{
+				ComponentRefs: []recipe.ComponentRef{
+					{Name: "gpu-operator"},
+				},
+				Criteria: &recipe.Criteria{
+					Service: recipe.CriteriaServiceAKS,
+				},
+			},
+			bundlerConfig: nil,
+			conditions:    map[string][]string{"service": {"aks"}},
+			wantWarnings:  0,
+			wantErrors:    0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			warnings, errors := CheckHostMofedWithoutNetworkOperator(ctx, tt.componentName, tt.recipeResult, tt.bundlerConfig, tt.conditions)
+
+			if len(warnings) != tt.wantWarnings {
+				t.Errorf("CheckHostMofedWithoutNetworkOperator() warnings = %d, want %d", len(warnings), tt.wantWarnings)
+			}
+			if len(errors) != tt.wantErrors {
+				t.Errorf("CheckHostMofedWithoutNetworkOperator() errors = %d, want %d", len(errors), tt.wantErrors)
+			}
+
+			if tt.wantWarningMsg != "" && len(warnings) > 0 {
+				found := false
+				for _, w := range warnings {
+					if strings.Contains(w, tt.wantWarningMsg) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("CheckHostMofedWithoutNetworkOperator() warnings = %v, want to contain %q", warnings, tt.wantWarningMsg)
 				}
 			}
 		})

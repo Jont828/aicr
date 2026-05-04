@@ -1,0 +1,110 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# NicClusterPolicy for AKS InfiniBand RDMA
+#
+# The network-operator Helm chart installs the operator and CRD but does not
+# template a NicClusterPolicy CR. This manifest creates the CR so the operator
+# reconciles the full RDMA stack: MOFED driver, RDMA shared device plugin, and
+# DOCA telemetry service.
+#
+# nodeAffinity targets only IB-capable nodes (labeled by the nfd-network-rule
+# manifest), so DaemonSets are not scheduled on CPU-only nodes.
+#
+# rdmaSharedDevicePlugin replaces the raw rdma-shared-dp-ds DaemonSet and
+# rdma-devices ConfigMap that were deployed manually on the working cluster.
+# Resource name hca_shared_devices_a is preserved for workload compatibility
+# (pods request rdma/hca_shared_devices_a).
+#
+# Reference: https://github.com/Azure/aks-rdma-infiniband/blob/main/configs/nicclusterpolicy
+---
+apiVersion: mellanox.com/v1alpha1
+kind: NicClusterPolicy
+metadata:
+  name: nic-cluster-policy
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+spec:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: feature.node.kubernetes.io/pci-15b3.present
+          operator: In
+          values:
+          - "true"
+
+  ofedDriver:
+    repository: nvcr.io/nvidia/mellanox
+    image: doca-driver
+    # Version list: https://catalog.ngc.nvidia.com/orgs/nvidia/teams/mellanox/containers/doca-driver/tags
+    # Format: doca<doca_version>-<ofed_version>-<mlnx_version>
+    version: doca3.2.0-25.10-1.2.8.0-2
+    env:
+    # Workaround for race condition where kernel module fails to load on AKS.
+    # See: https://github.com/Mellanox/doca-driver-build/issues/52
+    - name: OFED_BLACKLIST_MODULES_FILE
+      value: /host/etc/modprobe.d/blacklist-ofed-modules.conf
+    forcePrecompiled: false
+    upgradePolicy:
+      autoUpgrade: true
+      drain:
+        deleteEmptyDir: true
+        enable: true
+        force: true
+        timeoutSeconds: 300
+      maxParallelUpgrades: 1
+    startupProbe:
+      initialDelaySeconds: 10
+      periodSeconds: 20
+    livenessProbe:
+      initialDelaySeconds: 30
+      periodSeconds: 30
+    readinessProbe:
+      initialDelaySeconds: 10
+      periodSeconds: 30
+
+  rdmaSharedDevicePlugin:
+    repository: nvcr.io/nvidia/mellanox
+    image: k8s-rdma-shared-dev-plugin
+    # Tag follows network-operator release: network-operator-v<version>
+    version: network-operator-v26.1.0
+    # Config propagates directly to the k8s-rdma-shared-dev-plugin.
+    # resourceName hca_shared_devices_a matches the working cluster; pods
+    # request rdma/hca_shared_devices_a. rdmaHcaMax 1000 allows up to 1000
+    # concurrent pod allocations per node.
+    # 15b3 is the Mellanox/NVIDIA NIC vendor ID.
+    config: |
+      {
+        "periodicUpdateInterval": 300,
+        "configList": [{
+          "resourceName": "hca_shared_devices_a",
+          "rdmaHcaMax": 1000,
+          "selectors": {
+            "vendors": ["15b3"],
+            "drivers": ["mlx5_core"]
+          }
+        }]
+      }
+
+  docaTelemetryService:
+    repository: nvcr.io/nvidia/doca
+    image: doca_telemetry
+    # Version list: https://catalog.ngc.nvidia.com/orgs/nvidia/teams/doca/containers/doca_telemetry/tags
+    version: 1.22.5-doca3.1.0-host
