@@ -1,5 +1,53 @@
 # Changelog
 
+
+## [0.12.1] - 2026-05-01
+
+### New Features
+- *(cli)* Add skill command for AI agent integration  by [@yuanchen8911](https://github.com/yuanchen8911)
+- *(cli)* Add snapshot analysis skill for Claude Code by [@mchmarny](https://github.com/mchmarny)
+- *(nodewright-customizations)* Add gb200 eks support  by [@ayuskauskas](https://github.com/ayuskauskas)
+- *(bundler)* Uniform NNN-folder bundle layout via localformat   by [@lockwobr](https://github.com/lockwobr)
+- *(collector)* Add Talos OS support via Kubernetes Node info  by [@ayuskauskas](https://github.com/ayuskauskas)
+- *(recipes)* Enable NFD Topology Updater on production GPU recipes  by [@ArangoGutierrez](https://github.com/ArangoGutierrez)
+- *(bundler)* Add headless OIDC paths for bundle --attest  by [@lockwobr](https://github.com/lockwobr)
+- *(release)* Publish THIRD_PARTY_NOTICES.md as a release asset  by [@ayuskauskas](https://github.com/ayuskauskas)
+
+### Bug Fixes
+- Post-release code quality and correctness cleanup by [@mchmarny](https://github.com/mchmarny)
+- *(ci)* Eliminate redundant CI workflow executions by [@mchmarny](https://github.com/mchmarny)
+- *(recipes)* Use NFD chart version 0.18.3 without v prefix  by [@yuanchen8911](https://github.com/yuanchen8911)
+- *(ci)* Use project board priority field instead of labels for issue report by [@mchmarny](https://github.com/mchmarny)
+- *(ci)* Move organization-projects permission to workflow level by [@mchmarny](https://github.com/mchmarny)
+- *(ci)* Remove invalid organization-projects permission key by [@mchmarny](https://github.com/mchmarny)
+- *(ci)* Remove project board integration from issue report by [@mchmarny](https://github.com/mchmarny)
+- *(ci)* Only send Slack notification on critical/high vulns by [@mchmarny](https://github.com/mchmarny)
+- *(bundler)* Layer-neutral dynamic declaration errors  by [@mchmarny](https://github.com/mchmarny)
+- *(bundler)* Preserve inner error codes instead of double-wrapping  by [@mchmarny](https://github.com/mchmarny)
+- *(verifier)* Add trust level reason to verify output  by [@mchmarny](https://github.com/mchmarny)
+- *(bundler)* Demote nodewright selector warnings to info severity  by [@mchmarny](https://github.com/mchmarny)
+- *(ci)* Centralize GPU CI runtime pins  by [@yuanchen8911](https://github.com/yuanchen8911)
+- Update license check  by [@lockwobr](https://github.com/lockwobr)
+- *(ci)* Trigger H100 GPU tests on shared recipe changes  by [@yuanchen8911](https://github.com/yuanchen8911)
+- *(recipes)* Use Helm manifest-only pattern for gke-nccl-tcpxo  by [@yuanchen8911](https://github.com/yuanchen8911)
+- *(recipes)* Drop hook-succeeded from torch-distributed runtime  by [@yuanchen8911](https://github.com/yuanchen8911)
+- Address top-7 code-review findings across packages  by [@mchmarny](https://github.com/mchmarny)
+- *(recipes)* Handle kubeflow-trainer v2.2.0 API changes  by [@yuanchen8911](https://github.com/yuanchen8911)
+- *(recipes)* Correct nvsentinel registry default to OCI source  by [@yuanchen8911](https://github.com/yuanchen8911)
+
+### Other Tasks
+- Bump postcss from 8.5.8 to 8.5.10 in /site in the npm_and_yarn group across 1 directory  by [@dependabot[bot]](https://github.com/dependabot[bot])
+- Deps: bump goreleaser/goreleaser-action from 7.1.0 to 7.2.1  by [@dependabot[bot]](https://github.com/dependabot[bot])
+- Enable CodeRabbit auto-review on draft PRs  by [@yuanchen8911](https://github.com/yuanchen8911)
+- Retry grype install on transient github 502s  by [@yuanchen8911](https://github.com/yuanchen8911)
+- Refactor and harden H100 GPU CI workflow  by [@yuanchen8911](https://github.com/yuanchen8911)
+- *(roadmap)* Restructure around v1 objectives  by [@mchmarny](https://github.com/mchmarny)
+- *(kwok)* Add prerequisites and fix copy-paste pitfalls  by [@arun-gupta](https://github.com/arun-gupta)
+- *(recipe)* Bump dynamo-platform from 0.9.x to 1.0.2 and add Grove chart  by [@Jont828](https://github.com/Jont828)
+- *(recipes)* Bump 6 components to upstream latest (phase 1)  by [@yuanchen8911](https://github.com/yuanchen8911)
+- *(deps)* Bump controller-runtime, apiextensions-apiserver, kube-openapi, semver by [@mchmarny](https://github.com/mchmarny)
+- *(recipes)* Bump kai-scheduler v0.14.1 and kubeflow-trainer 2.2.0  by [@yuanchen8911](https://github.com/yuanchen8911)
+
 ## [0.12.0] - 2026-04-24
 
 ### New Features

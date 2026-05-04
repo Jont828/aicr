@@ -97,12 +97,10 @@ spec:
         nvidia.com/gpu: 1
       limits:
         nvidia.com/gpu: 1
-  podTemplateOverrides:
-    - targetJobs:
-        - name: node
-      spec:
-        tolerations:
-          - operator: Exists
+  # No podTemplateOverrides / runtimePatches needed — the torch-distributed
+  # ClusterTrainingRuntime carries the cluster-aware nodeSelector and
+  # tolerations baked in at bundle time from --accelerated-node-selector /
+  # --accelerated-node-toleration flags.
   runtimeRef:
     name: torch-distributed
     apiGroup: trainer.kubeflow.org

@@ -17,12 +17,16 @@ package build
 import (
 	"context"
 	stderrors "errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/NVIDIA/aicr/pkg/defaults"
 	"github.com/NVIDIA/aicr/pkg/errors"
 )
 
@@ -92,6 +96,11 @@ func TestLoadSpec_NotFound(t *testing.T) {
 	}
 	if sErr.Code != errors.ErrCodeNotFound {
 		t.Errorf("error code = %v, want %v", sErr.Code, errors.ErrCodeNotFound)
+	}
+	// The structured error must still chain to fs.ErrNotExist so callers
+	// using stderrors.Is continue to work after the os.IsNotExist swap.
+	if !stderrors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected error to wrap fs.ErrNotExist, chain = %v", err)
 	}
 }
 
@@ -365,5 +374,293 @@ func TestBuildSpec_SetImageStatus(t *testing.T) {
 
 	if len(spec.Status.Images) != 2 {
 		t.Errorf("len(Status.Images) = %d, want 2", len(spec.Status.Images))
+	}
+}
+
+func TestLoadSpec_OversizeFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "huge.yaml")
+
+	// Build a payload larger than MaxSpecFileBytes. Use valid YAML so the
+	// size check is what trips, not the parser.
+	var b strings.Builder
+	b.WriteString("apiVersion: aicr.nvidia.com/v1beta1\nkind: AICRRuntime\nspec:\n  registry:\n    host: r\n    repository: r\n  comment: \"")
+	pad := strings.Repeat("x", defaults.MaxSpecFileBytes+16)
+	b.WriteString(pad)
+	b.WriteString("\"\n")
+
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	_, err := LoadSpec(context.Background(), path)
+	if err == nil {
+		t.Fatal("expected error for oversize file")
+	}
+
+	var sErr *errors.StructuredError
+	if !stderrors.As(err, &sErr) {
+		t.Fatalf("expected *errors.StructuredError, got %T", err)
+	}
+	if sErr.Code != errors.ErrCodeInvalidRequest {
+		t.Errorf("error code = %v, want %v", sErr.Code, errors.ErrCodeInvalidRequest)
+	}
+}
+
+func TestLoadSpec_UnknownField(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "typo.yaml")
+
+	// "regestry" instead of "registry" — KnownFields(true) must reject it.
+	content := `apiVersion: aicr.nvidia.com/v1beta1
+kind: AICRRuntime
+spec:
+  regestry:
+    host: registry.example.com
+    repository: aicr-runtime
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	_, err := LoadSpec(context.Background(), path)
+	if err == nil {
+		t.Fatal("expected error for unknown YAML field")
+	}
+
+	var sErr *errors.StructuredError
+	if !stderrors.As(err, &sErr) {
+		t.Fatalf("expected *errors.StructuredError, got %T", err)
+	}
+	if sErr.Code != errors.ErrCodeInvalidRequest {
+		t.Errorf("error code = %v, want %v", sErr.Code, errors.ErrCodeInvalidRequest)
+	}
+	if !strings.Contains(err.Error(), "regestry") {
+		t.Errorf("expected error message to contain unknown key %q, got %q", "regestry", err.Error())
+	}
+}
+
+func TestBuildSpec_WriteBack_AtomicNoTempLeftover(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	spec := &BuildSpec{
+		APIVersion: ExpectedAPIVersion,
+		Kind:       ExpectedKind,
+		Spec: BuildSpecConfig{
+			Recipe:   "/data/recipes/eks-training.yaml",
+			Version:  "1.0.0",
+			Registry: RegistryConfig{Host: "registry.example.com", Repository: "test"},
+		},
+	}
+
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "spec.yaml")
+
+	if err := spec.WriteBack(ctx, outPath); err != nil {
+		t.Fatalf("WriteBack() unexpected error: %v", err)
+	}
+
+	// Destination must exist with restrictive perms.
+	info, err := os.Stat(outPath)
+	if err != nil {
+		t.Fatalf("stat dest: %v", err)
+	}
+	if got := info.Mode().Perm(); got != defaults.SpecFileMode.Perm() {
+		t.Errorf("dest perms = %v, want %v", got, defaults.SpecFileMode.Perm())
+	}
+
+	// .tmp-* siblings must not remain after a successful write.
+	matches, err := filepath.Glob(outPath + ".tmp-*")
+	if err != nil {
+		t.Fatalf("glob tmp leftovers: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("expected no .tmp-* leftover, got %v", matches)
+	}
+
+	// Repeated writes must overwrite cleanly without leaking the .tmp file.
+	spec.SetImageStatus("charts", ImageStatus{
+		Registry:   "registry.example.com",
+		Repository: "test/charts",
+		Tag:        "v2",
+	})
+	if err = spec.WriteBack(ctx, outPath); err != nil {
+		t.Fatalf("WriteBack() second call: %v", err)
+	}
+	matches2, err := filepath.Glob(outPath + ".tmp-*")
+	if err != nil {
+		t.Fatalf("glob tmp leftovers (rewrite): %v", err)
+	}
+	if len(matches2) != 0 {
+		t.Errorf("expected no .tmp-* leftover after rewrite, got %v", matches2)
+	}
+}
+
+// TestBuildSpec_WriteBack_RenameFailurePreservesOriginal verifies that when
+// the atomic rename step fails (after a successful temp write), WriteBack
+// returns an error, the existing destination remains byte-for-byte
+// unchanged, and the temp file is cleaned up. Uses the renameFn seam to
+// inject a deterministic rename failure.
+func TestBuildSpec_WriteBack_RenameFailurePreservesOriginal(t *testing.T) {
+	// Not parallel: mutates package-level renameFn.
+
+	ctx := context.Background()
+
+	// Seed an existing destination with known content.
+	original := &BuildSpec{
+		APIVersion: ExpectedAPIVersion,
+		Kind:       ExpectedKind,
+		Spec: BuildSpecConfig{
+			Recipe:   "/data/recipes/original.yaml",
+			Registry: RegistryConfig{Host: "registry.example.com", Repository: "test"},
+		},
+	}
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "spec.yaml")
+	if err := original.WriteBack(ctx, outPath); err != nil {
+		t.Fatalf("seed WriteBack: %v", err)
+	}
+	originalBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read seed: %v", err)
+	}
+
+	// Inject a rename failure for the next WriteBack call.
+	injected := stderrors.New("injected rename failure")
+	prev := renameFn
+	renameFn = func(string, string) error { return injected }
+	t.Cleanup(func() { renameFn = prev })
+
+	updated := &BuildSpec{
+		APIVersion: ExpectedAPIVersion,
+		Kind:       ExpectedKind,
+		Spec: BuildSpecConfig{
+			Recipe:   "/data/recipes/updated.yaml",
+			Registry: RegistryConfig{Host: "registry.example.com", Repository: "test"},
+		},
+	}
+	err = updated.WriteBack(ctx, outPath)
+	if err == nil {
+		t.Fatal("expected WriteBack to fail when rename is stubbed to fail")
+	}
+	if !stderrors.Is(err, injected) {
+		t.Errorf("expected wrapped injected rename failure, got %v", err)
+	}
+	var sErr *errors.StructuredError
+	if !stderrors.As(err, &sErr) {
+		t.Fatalf("expected *errors.StructuredError, got %T", err)
+	}
+	if sErr.Code != errors.ErrCodeInternal {
+		t.Errorf("error code = %v, want %v", sErr.Code, errors.ErrCodeInternal)
+	}
+
+	// Original destination must be untouched.
+	currentBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read after failed rename: %v", err)
+	}
+	if string(currentBytes) != string(originalBytes) {
+		t.Errorf("original file was modified after failed rename:\nbefore: %s\nafter:  %s",
+			originalBytes, currentBytes)
+	}
+
+	// Temp file should have been cleaned up.
+	matches, err := filepath.Glob(outPath + ".tmp-*")
+	if err != nil {
+		t.Fatalf("glob tmp leftovers: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("expected no .tmp-* leftover after failed rename, got %v", matches)
+	}
+}
+
+// TestBuildSpec_WriteBack_TempCreateFailurePreservesOriginal verifies that
+// when the temp file cannot be created (e.g., the destination directory is
+// read-only), WriteBack returns an error and the existing destination file
+// remains byte-for-byte unchanged. This exercises the os.CreateTemp failure
+// branch — the rename branch is unreachable here.
+func TestBuildSpec_WriteBack_TempCreateFailurePreservesOriginal(t *testing.T) {
+	// Not parallel: chmod's effect is process-wide; concurrent tests in
+	// the same temp dir would race.
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-readonly directory blocking is POSIX-specific")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+
+	ctx := context.Background()
+
+	// Seed an existing destination with known content.
+	original := &BuildSpec{
+		APIVersion: ExpectedAPIVersion,
+		Kind:       ExpectedKind,
+		Spec: BuildSpecConfig{
+			Recipe:   "/data/recipes/original.yaml",
+			Registry: RegistryConfig{Host: "registry.example.com", Repository: "test"},
+		},
+	}
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "spec.yaml")
+	if err := original.WriteBack(ctx, outPath); err != nil {
+		t.Fatalf("seed WriteBack: %v", err)
+	}
+	originalBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read seed: %v", err)
+	}
+
+	// Make the directory read-only so os.CreateTemp fails inside WriteBack.
+	// Restore writability on test exit so t.TempDir's cleanup can run.
+	if err = os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("chmod dir read-only: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0o755)
+	})
+
+	updated := &BuildSpec{
+		APIVersion: ExpectedAPIVersion,
+		Kind:       ExpectedKind,
+		Spec: BuildSpecConfig{
+			Recipe:   "/data/recipes/updated.yaml",
+			Registry: RegistryConfig{Host: "registry.example.com", Repository: "test"},
+		},
+	}
+	err = updated.WriteBack(ctx, outPath)
+	if err == nil {
+		t.Fatal("expected WriteBack to fail when destination directory is read-only")
+	}
+	var sErr *errors.StructuredError
+	if !stderrors.As(err, &sErr) {
+		t.Fatalf("expected *errors.StructuredError, got %T", err)
+	}
+	if sErr.Code != errors.ErrCodeInternal {
+		t.Errorf("error code = %v, want %v", sErr.Code, errors.ErrCodeInternal)
+	}
+
+	// Original destination must be untouched.
+	currentBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read after failed WriteBack: %v", err)
+	}
+	if string(currentBytes) != string(originalBytes) {
+		t.Errorf("original file was modified after failed WriteBack:\nbefore: %s\nafter:  %s",
+			originalBytes, currentBytes)
+	}
+
+	// And no .tmp-* debris should remain alongside it.
+	matches, err := filepath.Glob(filepath.Join(dir, "spec.yaml.tmp-*"))
+	if err != nil {
+		t.Fatalf("glob tmp leftovers: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("expected no .tmp-* leftover after failed WriteBack, got %v", matches)
 	}
 }

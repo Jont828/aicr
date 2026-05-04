@@ -1689,7 +1689,9 @@ AICR respects standard environment variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `KUBECONFIG` | Path to Kubernetes config file | `~/.kube/config` |
-| `LOG_LEVEL` | Logging level: debug, info, warn, error | info |
+| `AICR_LOG_LEVEL` | Logging level: debug, info, warn, error | info |
+| `AICR_LOG_PREFIX` | Override the CLI logger prefix | `cli` |
+| `NO_COLOR` | Suppress ANSI color codes in CLI logger output (de-facto standard, see <https://no-color.org/>) | unset |
 
 ## Exit Codes
 

@@ -15,10 +15,14 @@
 package recipe
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/NVIDIA/aicr/pkg/defaults"
+	aicrerrors "github.com/NVIDIA/aicr/pkg/errors"
 )
 
 func TestHandleRecipes_MethodNotAllowed(t *testing.T) {
@@ -107,5 +111,50 @@ func TestHandleRecipes_GET_ValidCriteria(t *testing.T) {
 		if cc == "" {
 			t.Error("Cache-Control header not set on successful response")
 		}
+	}
+}
+
+// TestHandleRecipes_POST_BodyTooLarge verifies that a POST body exceeding
+// defaults.MaxRecipePOSTBytes is rejected with HTTP 413 and a structured
+// INVALID_REQUEST error code carrying the exact configured cap.
+//
+// Uses a valid JSON envelope wrapping a giant string so io.ReadAll inside
+// the handler reaches the MaxBytesReader limit; this exercises the
+// *http.MaxBytesError detection path deterministically rather than relying
+// on early JSON syntax errors.
+func TestHandleRecipes_POST_BodyTooLarge(t *testing.T) {
+	builder := NewBuilder()
+
+	oversize := int(defaults.MaxRecipePOSTBytes) + 1024
+	prefix := `{"service":"`
+	suffix := `"}`
+	padding := strings.Repeat("a", oversize-len(prefix)-len(suffix))
+	body := prefix + padding + suffix
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/recipe", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	builder.HandleRecipes(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d. Body: %s",
+			w.Code, http.StatusRequestEntityTooLarge, w.Body.String())
+	}
+
+	var resp struct {
+		Code    string `json:"code"`
+		Details struct {
+			LimitBytes int64 `json:"limit_bytes"`
+		} `json:"details"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if resp.Code != string(aicrerrors.ErrCodeInvalidRequest) {
+		t.Errorf("error code = %q, want %q", resp.Code, aicrerrors.ErrCodeInvalidRequest)
+	}
+	if resp.Details.LimitBytes != defaults.MaxRecipePOSTBytes {
+		t.Errorf("limit_bytes = %d, want %d", resp.Details.LimitBytes, defaults.MaxRecipePOSTBytes)
 	}
 }

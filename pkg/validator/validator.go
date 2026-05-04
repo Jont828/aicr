@@ -188,7 +188,7 @@ func (v *Validator) ValidatePhases(
 	for _, phase := range phases {
 		select {
 		case <-ctx.Done():
-			return results, ctx.Err()
+			return results, errors.Wrap(errors.ErrCodeTimeout, "context canceled during phase iteration", ctx.Err())
 		default:
 		}
 
@@ -315,7 +315,7 @@ func (v *Validator) runPhase(
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, errors.Wrap(errors.ErrCodeTimeout, "context canceled during entry evaluation", ctx.Err())
 		default:
 		}
 
@@ -373,7 +373,9 @@ func (v *Validator) runPhase(
 				slog.Warn("failed to cleanup Job", "name", entry.Name, "error", cleanupErr)
 			}
 			termCtx, termCancel := context.WithTimeout(context.Background(), defaults.K8sPodTerminationWaitTimeout) //nolint:contextcheck // Fresh context: parent may be canceled
-			deployer.WaitForPodTermination(termCtx)                                                                 //nolint:contextcheck // Uses fresh context above
+			if termErr := deployer.WaitForPodTermination(termCtx); termErr != nil {                                 //nolint:contextcheck // Uses fresh context above
+				slog.Warn("failed to wait for pod termination", "name", entry.Name, "error", termErr)
+			}
 			termCancel()
 		}
 	}

@@ -759,7 +759,7 @@ if [[ "${SKIP_TOOLS}" == "false" ]] && command_exists go; then
     else
         log_info "Installing golangci-lint ${GOLANGCI_LINT_VERSION}..."
         if prompt_continue; then
-            GOLANGCI_SCRIPT_URL="https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh"
+            GOLANGCI_SCRIPT_URL="https://raw.githubusercontent.com/golangci/golangci-lint/${GOLANGCI_LINT_VERSION}/install.sh"
             GOLANGCI_TMP=$(mktemp)
             curl -fsSL "$GOLANGCI_SCRIPT_URL" -o "$GOLANGCI_TMP"
             verify_sha256 "$GOLANGCI_TMP" "${GOLANGCI_LINT_INSTALL_SHA256:-SKIP}"

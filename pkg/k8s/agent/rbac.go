@@ -16,6 +16,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/NVIDIA/aicr/pkg/errors"
 	"github.com/NVIDIA/aicr/pkg/k8s"
@@ -23,21 +24,59 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
-// ensureNamespace creates the namespace if it does not exist.
-// Uses create-or-ignore since namespaces are immutable.
+// ensureNamespace creates or labels the namespace.
+// We deliberately do not use IgnoreAlreadyExists alone here because the
+// managed-by label is intent we want applied even when the user pre-created
+// the namespace. The flow is:
+//  1. Try Create — common path for fresh installs.
+//  2. On AlreadyExists, Get the namespace and check if our managed-by label
+//     is already set; if so, return early. This avoids requiring patch
+//     permission for the (typical) case where the namespace was already
+//     properly labeled by a prior run.
+//  3. Otherwise, Patch the label on. This is the only path that requires
+//     namespaces/patch.
 func (d *Deployer) ensureNamespace(ctx context.Context) error {
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: d.config.Namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "aicr",
+				labelAppManagedBy: appName,
 			},
 		},
 	}
 	_, err := d.clientset.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
-	return k8s.IgnoreAlreadyExists(err)
+	if err == nil {
+		return nil
+	}
+	if !apierrors.IsAlreadyExists(err) {
+		return errors.Wrap(errors.ErrCodeInternal, "failed to create Namespace", err)
+	}
+
+	// Pre-existing namespace: read the current labels first so we only Patch
+	// when the label is actually missing or wrong (saves a round trip and
+	// avoids requiring patch permission in the common case).
+	existing, getErr := d.clientset.CoreV1().Namespaces().
+		Get(ctx, d.config.Namespace, metav1.GetOptions{})
+	if getErr != nil {
+		return errors.Wrap(errors.ErrCodeInternal, "failed to get existing Namespace", getErr)
+	}
+	if existing.Labels[labelAppManagedBy] == appName {
+		return nil
+	}
+
+	patch := []byte(fmt.Sprintf(
+		`{"metadata":{"labels":{%q:%q}}}`,
+		labelAppManagedBy, appName,
+	))
+	if _, err := d.clientset.CoreV1().Namespaces().Patch(
+		ctx, d.config.Namespace, types.MergePatchType, patch, metav1.PatchOptions{},
+	); err != nil {
+		return errors.Wrap(errors.ErrCodeInternal, "failed to label existing Namespace", err)
+	}
+	return nil
 }
 
 // ensureServiceAccount creates the ServiceAccount for the agent.

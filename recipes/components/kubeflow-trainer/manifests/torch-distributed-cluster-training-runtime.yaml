@@ -25,8 +25,11 @@ metadata:
 spec:
   mlPolicy:
     numNodes: 1
-    torch:
-      numProcPerNode: auto
+    # numProcPerNode was removed from mlPolicy.torch in kubeflow-trainer v2.2.0
+    # (kubeflow/trainer#3239) — Torch now infers parallelism from
+    # the container's nvidia.com/gpu resource limit. mlPolicy.mpi.numProcPerNode
+    # is unaffected.
+    torch: {}
   template:
     spec:
       replicatedJobs:
@@ -38,6 +41,22 @@ spec:
             spec:
               template:
                 spec:
+                  # nodeSelector and tolerations are injected by the AICR bundler
+                  # from --accelerated-node-selector / --accelerated-node-toleration
+                  # flags via the registry's nodeScheduling.accelerated paths
+                  # (see recipes/registry.yaml). This lets users submit a bare
+                  # TrainJob with no podTemplateOverrides / runtimePatches — the
+                  # runtime carries the per-cluster scheduling vocabulary baked
+                  # in at bundle time.
+                  {{- $kft := index .Values "kubeflow-trainer" }}
+                  {{- with $kft.acceleratedNodeSelector }}
+                  nodeSelector:
+                    {{- toYaml . | nindent 20 }}
+                  {{- end }}
+                  {{- with $kft.acceleratedTolerations }}
+                  tolerations:
+                    {{- toYaml . | nindent 20 }}
+                  {{- end }}
                   containers:
                     - name: node
                       image: pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime

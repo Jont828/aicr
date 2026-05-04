@@ -19,11 +19,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/template"
 
 	"github.com/Masterminds/sprig/v3"
 
+	"github.com/NVIDIA/aicr/pkg/defaults"
 	"github.com/NVIDIA/aicr/pkg/errors"
 )
 
@@ -96,11 +98,15 @@ func (t *TemplateWriter) Serialize(ctx context.Context, data any) error {
 }
 
 // Close releases any resources associated with the TemplateWriter.
-// It should be called when done writing, especially for file-based writers.
-// It's safe to call Close multiple times or on stdout-based writers.
+// Idempotent: subsequent calls are no-ops.
 func (t *TemplateWriter) Close() error {
-	if t.closer != nil {
-		return t.closer.Close()
+	if t.closer == nil {
+		return nil
+	}
+	closer := t.closer
+	t.closer = nil // mark closed first so retries no-op even if Close panics
+	if err := closer.Close(); err != nil {
+		return errors.Wrap(errors.ErrCodeInternal, "failed to close template writer", err)
 	}
 	return nil
 }
@@ -182,12 +188,24 @@ func readTemplateContent(ctx context.Context, path string) ([]byte, error) {
 		return content, nil
 	}
 
-	content, err := os.ReadFile(path)
+	// Bound the read to prevent OOM from a malicious or runaway template file.
+	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, errors.New(errors.ErrCodeNotFound, fmt.Sprintf("template file not found: %s", path))
 		}
+		return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to open template file %q", path), err)
+	}
+	defer func() { _ = f.Close() }()
+
+	limited := io.LimitReader(f, defaults.MaxSpecFileBytes+1)
+	content, err := io.ReadAll(limited)
+	if err != nil {
 		return nil, errors.Wrap(errors.ErrCodeInternal, fmt.Sprintf("failed to read template file %q", path), err)
+	}
+	if int64(len(content)) > defaults.MaxSpecFileBytes {
+		return nil, errors.New(errors.ErrCodeInvalidRequest,
+			fmt.Sprintf("template file %q exceeds limit of %d bytes", path, defaults.MaxSpecFileBytes))
 	}
 	return content, nil
 }

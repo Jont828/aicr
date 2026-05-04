@@ -26,6 +26,11 @@ const (
 	// Covers 6 sequential sub-collectors (server, image, policy, node, helm, argocd).
 	CollectorK8sTimeout = 60 * time.Second
 
+	// K8sPodListPageSize is the number of pods per List API page when paginating
+	// cluster-wide pod listings (e.g., container image collection). Mirrors
+	// TopologyListPageSize to bound memory on large clusters.
+	K8sPodListPageSize = int64(500)
+
 	// NFDDetectionTimeout is the timeout for NFD-based hardware detection.
 	// PCI enumeration and kernel module listing are fast local operations
 	// reading from sysfs/procfs, so a short timeout is sufficient.
@@ -122,6 +127,14 @@ const (
 
 	// HTTPExpectContinueTimeout is the timeout for Expect: 100-continue.
 	HTTPExpectContinueTimeout = 1 * time.Second
+)
+
+// Trust / TUF timeouts for Sigstore trust-root refresh.
+const (
+	// TUFUpdateTimeout bounds the total time for Sigstore TUF metadata refresh.
+	// TUF downloads several metadata files (root, timestamp, snapshot, targets)
+	// from a CDN; allow more headroom than a single HTTP request.
+	TUFUpdateTimeout = 2 * time.Minute
 )
 
 // ConfigMap timeouts for Kubernetes ConfigMap operations.
@@ -363,6 +376,35 @@ const (
 	// ServerMaxHeaderBytes is the maximum size of request headers (64KB).
 	// Prevents header-based attacks.
 	ServerMaxHeaderBytes = 1 << 16
+
+	// MaxBundlePOSTBytes is the maximum size in bytes for a bundle POST
+	// request body. Bundle bodies carry a fully resolved RecipeResult which
+	// can include component values; 8 MiB provides generous headroom while
+	// preventing unbounded memory allocation by malicious or buggy clients.
+	MaxBundlePOSTBytes int64 = 8 * 1024 * 1024 // 8 MiB
+
+	// MaxRecipePOSTBytes is the maximum size in bytes for recipe / query POST
+	// request bodies. Recipe criteria and query selectors are small structured
+	// inputs; 1 MiB is well above any legitimate payload while bounding
+	// per-request memory.
+	MaxRecipePOSTBytes int64 = 1 * 1024 * 1024 // 1 MiB
+
+	// ServerMaxBodyBytes is the default per-request body cap applied as a
+	// fallback when a handler does not configure its own MaxBytesReader.
+	// Derived from MaxBundlePOSTBytes (the largest legitimate body) so the
+	// fallback cannot drift if the bundle limit is ever retuned.
+	ServerMaxBodyBytes = MaxBundlePOSTBytes
+)
+
+// Server-wide handler defaults.
+const (
+	// ServerHandlerTimeout is the default per-request handler timeout used by
+	// the timeout middleware when a handler-specific timeout is not provided.
+	ServerHandlerTimeout = 30 * time.Second
+
+	// ServerRateLimitWindow is the rate-limit window length advertised to
+	// clients via X-RateLimit-Reset. Mirrors the limiter's per-second model.
+	ServerRateLimitWindow = 1 * time.Second
 )
 
 // Server rate limiting constants.
@@ -438,6 +480,18 @@ const (
 	// CNCFSubmissionTimeout is the timeout for CNCF submission evidence
 	// collection. CNCF submission deploys GPU workloads and runs HPA tests.
 	CNCFSubmissionTimeout = 20 * time.Minute
+
+	// EvidenceSectionTimeout is the per-section timeout for the bash
+	// subprocess that collects behavioral evidence for a single feature.
+	// A single section may deploy a workload, wait for readiness, and run
+	// kubectl probes; 5 minutes provides headroom while still bounding
+	// runaway shell processes.
+	EvidenceSectionTimeout = 5 * time.Minute
+
+	// EvidenceMaxOutputBytes caps captured stdout/stderr per evidence
+	// section to prevent unbounded memory growth from chatty kubectl
+	// commands or runaway loops in collection scripts.
+	EvidenceMaxOutputBytes = 10 * 1024 * 1024 // 10 MiB
 )
 
 // Retry poll intervals for validator wait loops.
@@ -485,4 +539,26 @@ const (
 	// Prevents unbounded memory allocation when reading attestation bundles.
 	// A typical Sigstore bundle is under 100KB; 10 MiB provides generous headroom.
 	MaxSigstoreBundleSize = 10 * 1024 * 1024 // 10 MiB
+)
+
+// OCI registry push tuning. Bounds individual oras.Copy attempts and the
+// retry policy applied around them. Push attempts can take minutes for
+// large bundles over slow links, so the per-attempt timeout is generous.
+const (
+	// RegistryPushTimeout is the per-attempt timeout for a single oras.Copy
+	// invocation against a remote registry. Each retry receives a fresh
+	// budget of this size.
+	RegistryPushTimeout = 10 * time.Minute
+
+	// RegistryPushRetries is the maximum number of oras.Copy attempts
+	// (initial attempt plus retries) for transient registry failures.
+	RegistryPushRetries = 3
+
+	// RegistryPushBackoff is the initial backoff between retry attempts.
+	// The backoff is doubled per attempt and jittered by +/-25%.
+	RegistryPushBackoff = 1 * time.Second
+
+	// OCIPushConcurrency is the maximum number of concurrent blob copy
+	// tasks within a single oras.Copy invocation.
+	OCIPushConcurrency = 3
 )

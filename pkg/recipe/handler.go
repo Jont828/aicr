@@ -16,7 +16,9 @@ package recipe
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -41,6 +43,8 @@ func (b *Builder) HandleRecipes(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), defaults.RecipeHandlerTimeout)
 	defer cancel()
 
+	logger := slog.With("requestID", server.RequestIDFromContext(r.Context()))
+
 	var criteria *Criteria
 	var err error
 
@@ -48,12 +52,32 @@ func (b *Builder) HandleRecipes(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		criteria, err = ParseCriteriaFromRequest(r)
 	case http.MethodPost:
-		criteria, err = ParseCriteriaFromBody(r.Body, r.Header.Get("Content-Type"))
+		// Bound request body to defend against memory exhaustion.
+		bounded := http.MaxBytesReader(w, r.Body, defaults.MaxRecipePOSTBytes)
 		defer func() {
-			if r.Body != nil {
-				r.Body.Close()
+			// Drain via the bounded reader so any remaining bytes still
+			// count against MaxBytesReader (draining r.Body directly would
+			// bypass the cap). Errors here are debug-only.
+			if _, drainErr := io.Copy(io.Discard, bounded); drainErr != nil {
+				logger.Debug("request body drain failed", "error", drainErr)
+			}
+			if closeErr := bounded.Close(); closeErr != nil {
+				logger.Debug("request body close failed", "error", closeErr)
 			}
 		}()
+		criteria, err = ParseCriteriaFromBody(bounded, r.Header.Get("Content-Type"))
+		var maxBytesErr *http.MaxBytesError
+		if err != nil && stderrors.As(err, &maxBytesErr) {
+			logger.Warn("recipe POST body exceeded size limit",
+				"limit", defaults.MaxRecipePOSTBytes,
+				"received", maxBytesErr.Limit,
+			)
+			server.WriteError(w, r, http.StatusRequestEntityTooLarge, aicrerrors.ErrCodeInvalidRequest,
+				"Request body exceeds maximum allowed size", false, map[string]any{
+					"limit_bytes": defaults.MaxRecipePOSTBytes,
+				})
+			return
+		}
 	default:
 		w.Header().Set("Allow", "GET, POST")
 		server.WriteError(w, r, http.StatusMethodNotAllowed, aicrerrors.ErrCodeMethodNotAllowed,
@@ -78,7 +102,7 @@ func (b *Builder) HandleRecipes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Debug("criteria",
+	logger.Debug("criteria",
 		"service", criteria.Service,
 		"accelerator", criteria.Accelerator,
 		"intent", criteria.Intent,

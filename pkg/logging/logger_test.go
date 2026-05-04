@@ -273,8 +273,8 @@ func TestSetDefaultStructuredLoggerWithLevel(t *testing.T) {
 }
 
 func TestEnvVarLogLevelConstant(t *testing.T) {
-	if envVarLogLevel != "LOG_LEVEL" {
-		t.Errorf("envVarLogLevel = %q, want %q", envVarLogLevel, "LOG_LEVEL")
+	if envVarLogLevel != "AICR_LOG_LEVEL" {
+		t.Errorf("envVarLogLevel = %q, want %q", envVarLogLevel, "AICR_LOG_LEVEL")
 	}
 }
 

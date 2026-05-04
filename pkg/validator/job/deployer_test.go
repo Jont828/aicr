@@ -16,15 +16,23 @@ package job
 
 import (
 	"context"
+	stderrors "errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/NVIDIA/aicr/pkg/defaults"
+	aicrerrors "github.com/NVIDIA/aicr/pkg/errors"
+	"github.com/NVIDIA/aicr/pkg/k8s/pod"
 	"github.com/NVIDIA/aicr/pkg/validator/catalog"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	runtime "k8s.io/apimachinery/pkg/runtime"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes/fake"
+	clienttesting "k8s.io/client-go/testing"
 )
 
 func testEntry() catalog.ValidatorEntry {
@@ -566,8 +574,16 @@ func TestCleanupJobNotFound(t *testing.T) {
 	}
 }
 
-func TestCheckJobTerminalComplete(t *testing.T) {
+// The following four tests previously exercised the in-package
+// `checkJobTerminal` helper directly. The terminal-state logic now lives in
+// `pod.WaitForJobTerminal` (pkg/k8s/pod). The tests are kept and adapted to
+// validate the integration: they drive a fake clientset preloaded with a Job
+// in the desired terminal-state fixture and assert that
+// `pod.WaitForJobTerminal` returns the expected result.
+
+func TestJobTerminal_Complete(t *testing.T) {
 	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "j", Namespace: "default"},
 		Status: batchv1.JobStatus{
 			Conditions: []batchv1.JobCondition{{
 				Type:   batchv1.JobComplete,
@@ -576,17 +592,20 @@ func TestCheckJobTerminalComplete(t *testing.T) {
 			}},
 		},
 	}
-	terminal, reason := checkJobTerminal(job)
-	if !terminal {
-		t.Error("expected terminal=true for Complete Job")
+	//nolint:staticcheck // SA1019: fake.NewSimpleClientset is sufficient for tests
+	client := fake.NewSimpleClientset(job)
+	got, err := pod.WaitForJobTerminal(context.Background(), client, "default", "j", time.Second)
+	if err != nil {
+		t.Fatalf("expected nil error for Complete Job, got: %v", err)
 	}
-	if reason != "Completed" {
-		t.Errorf("reason = %q, want %q", reason, "Completed")
+	if got == nil {
+		t.Fatal("expected job to be returned")
 	}
 }
 
-func TestCheckJobTerminalFailed(t *testing.T) {
+func TestJobTerminal_Failed(t *testing.T) {
 	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "j", Namespace: "default"},
 		Status: batchv1.JobStatus{
 			Conditions: []batchv1.JobCondition{{
 				Type:   batchv1.JobFailed,
@@ -595,29 +614,33 @@ func TestCheckJobTerminalFailed(t *testing.T) {
 			}},
 		},
 	}
-	terminal, reason := checkJobTerminal(job)
-	if !terminal {
-		t.Error("expected terminal=true for Failed Job")
+	//nolint:staticcheck // SA1019: fake.NewSimpleClientset is sufficient for tests
+	client := fake.NewSimpleClientset(job)
+	got, err := pod.WaitForJobTerminal(context.Background(), client, "default", "j", time.Second)
+	if err != nil {
+		t.Fatalf("expected nil error for Failed Job (terminal helper treats Failed as terminal), got: %v", err)
 	}
-	if reason != "DeadlineExceeded" {
-		t.Errorf("reason = %q, want %q", reason, "DeadlineExceeded")
-	}
-}
-
-func TestCheckJobTerminalRunning(t *testing.T) {
-	job := &batchv1.Job{
-		Status: batchv1.JobStatus{
-			Conditions: []batchv1.JobCondition{},
-		},
-	}
-	terminal, _ := checkJobTerminal(job)
-	if terminal {
-		t.Error("expected terminal=false for running Job")
+	if got == nil {
+		t.Fatal("expected job to be returned")
 	}
 }
 
-func TestCheckJobTerminalConditionFalse(t *testing.T) {
+func TestJobTerminal_Running(t *testing.T) {
 	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "j", Namespace: "default"},
+		Status:     batchv1.JobStatus{Conditions: []batchv1.JobCondition{}},
+	}
+	//nolint:staticcheck // SA1019: fake.NewSimpleClientset is sufficient for tests
+	client := fake.NewSimpleClientset(job)
+	_, err := pod.WaitForJobTerminal(context.Background(), client, "default", "j", 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error for running Job")
+	}
+}
+
+func TestJobTerminal_ConditionFalse(t *testing.T) {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "j", Namespace: "default"},
 		Status: batchv1.JobStatus{
 			Conditions: []batchv1.JobCondition{{
 				Type:   batchv1.JobComplete,
@@ -625,9 +648,11 @@ func TestCheckJobTerminalConditionFalse(t *testing.T) {
 			}},
 		},
 	}
-	terminal, _ := checkJobTerminal(job)
-	if terminal {
-		t.Error("expected terminal=false when condition status is False")
+	//nolint:staticcheck // SA1019: fake.NewSimpleClientset is sufficient for tests
+	client := fake.NewSimpleClientset(job)
+	_, err := pod.WaitForJobTerminal(context.Background(), client, "default", "j", 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error when condition status is False (not terminal)")
 	}
 }
 
@@ -763,5 +788,36 @@ func TestWaitForCompletionTimeout(t *testing.T) {
 	err := d.WaitForCompletion(canceledCtx, 1*time.Minute)
 	if err == nil {
 		t.Fatal("expected timeout error")
+	}
+}
+
+// TestWaitForPodTerminationPropagatesNonNotFound verifies that WaitForPodTermination
+// only swallows NotFound errors from getPodForJob. Other failures (e.g. RBAC
+// Forbidden) must propagate so the validator can decide retry/escalation
+// instead of silently skipping the termination wait.
+func TestWaitForPodTerminationPropagatesNonNotFound(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset()
+	cs.PrependReactor("list", "pods", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "*", stderrors.New("forbidden"))
+	})
+
+	d := &Deployer{
+		clientset: cs,
+		namespace: "default",
+		jobName:   "test-job",
+	}
+
+	err := d.WaitForPodTermination(context.Background())
+	if err == nil {
+		t.Fatal("expected error to propagate (Forbidden), got nil")
+	}
+	var sErr *aicrerrors.StructuredError
+	if !stderrors.As(err, &sErr) {
+		t.Fatalf("expected *StructuredError, got %T", err)
+	}
+	if sErr.Code == aicrerrors.ErrCodeNotFound {
+		t.Errorf("expected non-NotFound error code, got %v (Forbidden was swallowed!)", sErr.Code)
 	}
 }

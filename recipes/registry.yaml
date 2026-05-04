@@ -238,8 +238,8 @@ components:
     healthCheck:
       assertFile: checks/nvsentinel/health-check.yaml
     helm:
-      defaultRepository: https://helm.ngc.nvidia.com/nvidia
-      defaultChart: nvidia/nvsentinel
+      defaultRepository: oci://ghcr.io/nvidia
+      defaultChart: nvsentinel
       defaultVersion: v1.3.0
       defaultNamespace: nvsentinel
     nodeScheduling:
@@ -371,9 +371,9 @@ components:
     healthCheck:
       assertFile: checks/kai-scheduler/health-check.yaml
     helm:
-      defaultRepository: oci://ghcr.io/nvidia/kai-scheduler
+      defaultRepository: oci://ghcr.io/kai-scheduler/kai-scheduler
       defaultChart: kai-scheduler
-      defaultVersion: v0.13.0
+      defaultVersion: v0.14.1
       defaultNamespace: kai-scheduler
     nodeScheduling:
       system:
@@ -492,7 +492,7 @@ components:
     helm:
       defaultRepository: oci://ghcr.io/kubeflow/charts
       defaultChart: kubeflow-trainer
-      defaultVersion: 2.1.0
+      defaultVersion: 2.2.0
       defaultNamespace: kubeflow
     nodeScheduling:
       system:
@@ -502,3 +502,13 @@ components:
         tolerationPaths:
           - manager.tolerations
           - jobset.controller.tolerations
+      # accelerated paths target top-level keys; consumed by the
+      # torch-distributed ClusterTrainingRuntime template in
+      # components/kubeflow-trainer/manifests/. Lets users submit a bare
+      # TrainJob with no podTemplateOverrides / runtimePatches — the
+      # runtime carries the per-cluster scheduling baked in at bundle time.
+      accelerated:
+        nodeSelectorPaths:
+          - acceleratedNodeSelector
+        tolerationPaths:
+          - acceleratedTolerations

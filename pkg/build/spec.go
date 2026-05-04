@@ -15,12 +15,19 @@
 package build
 
 import (
+	"bytes"
 	"context"
+	stderrors "errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"log/slog"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/NVIDIA/aicr/pkg/defaults"
 	"github.com/NVIDIA/aicr/pkg/errors"
 )
 
@@ -30,6 +37,11 @@ const (
 	// ExpectedKind is the required kind for build spec files.
 	ExpectedKind = "AICRRuntime"
 )
+
+// renameFn is the rename implementation used by WriteBack. It exists as a
+// package-private variable so tests can stub it to exercise the rename
+// failure cleanup path; production code always uses os.Rename.
+var renameFn = os.Rename
 
 // BuildSpec represents the top-level build specification file used by the
 // runtime controller. It contains input configuration and output status.
@@ -69,24 +81,43 @@ type ImageStatus struct {
 	Digest     string `yaml:"digest,omitempty"`
 }
 
-// LoadSpec reads and parses a build spec file from disk.
+// LoadSpec reads and parses a build spec file from disk. The input is bounded
+// by defaults.MaxSpecFileBytes to prevent unbounded memory allocation from a
+// corrupted or hostile file. YAML decoding rejects unknown fields to surface
+// typos rather than silently dropping them.
 func LoadSpec(ctx context.Context, path string) (*BuildSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Wrap(errors.ErrCodeTimeout, "context cancelled before reading spec", err)
 	}
 
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if stderrors.Is(err, fs.ErrNotExist) {
 			return nil, errors.Wrap(errors.ErrCodeNotFound,
 				fmt.Sprintf("spec file not found: %q", path), err)
 		}
 		return nil, errors.Wrap(errors.ErrCodeInternal,
+			fmt.Sprintf("failed to open spec file %q", path), err)
+	}
+	defer f.Close()
+
+	// Read up to MaxSpecFileBytes+1 to detect oversize without loading more
+	// than necessary. If the read returns exactly cap+1 bytes, the file is
+	// over the limit.
+	data, err := io.ReadAll(io.LimitReader(f, defaults.MaxSpecFileBytes+1))
+	if err != nil {
+		return nil, errors.Wrap(errors.ErrCodeInternal,
 			fmt.Sprintf("failed to read spec file %q", path), err)
+	}
+	if len(data) > defaults.MaxSpecFileBytes {
+		return nil, errors.New(errors.ErrCodeInvalidRequest,
+			fmt.Sprintf("spec file exceeds maximum size of %d bytes: %q", defaults.MaxSpecFileBytes, path))
 	}
 
 	var spec BuildSpec
-	if err := yaml.Unmarshal(data, &spec); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&spec); err != nil {
 		return nil, errors.Wrap(errors.ErrCodeInvalidRequest,
 			fmt.Sprintf("failed to parse spec file %q", path), err)
 	}
@@ -117,7 +148,10 @@ func (s *BuildSpec) Validate() error {
 	return nil
 }
 
-// WriteBack marshals the spec (including updated status) back to disk.
+// WriteBack marshals the spec (including updated status) back to disk
+// atomically. It writes to a sibling temp file, fsyncs, closes, and renames
+// over the destination so a crash mid-write cannot leave the controller
+// observing a truncated or partially-written spec.
 func (s *BuildSpec) WriteBack(ctx context.Context, path string) error {
 	if err := ctx.Err(); err != nil {
 		return errors.Wrap(errors.ErrCodeTimeout, "context cancelled before writing spec", err)
@@ -128,11 +162,80 @@ func (s *BuildSpec) WriteBack(ctx context.Context, path string) error {
 		return errors.Wrap(errors.ErrCodeInternal, "failed to marshal spec", err)
 	}
 
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	// Use os.CreateTemp so concurrent WriteBack callers don't race on a
+	// shared "<path>.tmp" name and clobber each other before either rename.
+	// CreateTemp opens with mode 0o600, matching defaults.SpecFileMode.
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
 		return errors.Wrap(errors.ErrCodeInternal,
-			fmt.Sprintf("failed to write spec file %q", path), err)
+			fmt.Sprintf("failed to create temp spec file for %q", path), err)
+	}
+	tmp := f.Name()
+
+	// On any error after this point, attempt to remove the temp file so we
+	// don't leave debris next to the destination.
+	var writeErr error
+	if _, writeErr = f.Write(data); writeErr == nil {
+		writeErr = f.Sync()
+	}
+	closeErr := f.Close()
+	if writeErr == nil {
+		writeErr = closeErr
 	}
 
+	if writeErr != nil {
+		// tmp came from os.CreateTemp on the same dir we just wrote to;
+		// removing it is the inverse of that creation, not a tainted-path op.
+		if rmErr := os.Remove(tmp); rmErr != nil && !stderrors.Is(rmErr, fs.ErrNotExist) { //nolint:gosec // G703: tmp is from os.CreateTemp above
+			slog.Warn("failed to remove temp spec file after write error",
+				"path", tmp, "error", rmErr)
+		}
+		return errors.Wrap(errors.ErrCodeInternal,
+			fmt.Sprintf("failed to write spec file %q", path), writeErr)
+	}
+
+	if err := renameFn(tmp, path); err != nil {
+		if rmErr := os.Remove(tmp); rmErr != nil && !stderrors.Is(rmErr, fs.ErrNotExist) { //nolint:gosec // G703: tmp is from os.CreateTemp above
+			slog.Warn("failed to remove temp spec file after rename error",
+				"path", tmp, "error", rmErr)
+		}
+		return errors.Wrap(errors.ErrCodeInternal,
+			fmt.Sprintf("failed to rename temp spec file to %q", path), err)
+	}
+
+	// Sync the parent directory so the rename is persisted to disk. Without
+	// this, a crash after the rename can lose the new dirent even though
+	// the file's data was already fsynced. Best-effort: a failure here just
+	// means the rename isn't yet durable on disk; the in-memory state is
+	// already correct, so log a warning rather than reverting the write.
+	if dirErr := syncDir(dir); dirErr != nil {
+		slog.Warn("failed to fsync parent directory after spec rename",
+			"dir", dir, "error", dirErr)
+	}
+
+	return nil
+}
+
+// syncDir opens the directory and calls Sync to persist directory metadata
+// (e.g., the dirent created by Rename). On platforms where directories
+// cannot be opened for sync (notably Windows), the call is a no-op.
+func syncDir(dir string) error {
+	d, err := os.Open(dir) //nolint:gosec // opening a directory for fsync is intentional
+	if err != nil {
+		return errors.Wrap(errors.ErrCodeInternal,
+			fmt.Sprintf("failed to open directory for sync %q", dir), err)
+	}
+	syncErr := d.Sync()
+	closeErr := d.Close()
+	if syncErr != nil {
+		return errors.Wrap(errors.ErrCodeInternal,
+			fmt.Sprintf("failed to sync directory %q", dir), syncErr)
+	}
+	if closeErr != nil {
+		return errors.Wrap(errors.ErrCodeInternal,
+			fmt.Sprintf("failed to close directory %q", dir), closeErr)
+	}
 	return nil
 }
 

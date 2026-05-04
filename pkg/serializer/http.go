@@ -54,9 +54,9 @@ func RespondJSON(w http.ResponseWriter, statusCode int, data any) {
 
 const (
 	HTTPReaderUserAgent = "AICR-Serializer/1.0"
-)
 
-var (
+	// Defaults for HTTPReader connection pooling and timeouts.
+	// Declared as const (previously var) to prevent process-wide mutation.
 	HTTPReaderDefaultTimeout               = defaults.HTTPClientTimeout
 	HTTPReaderDefaultKeepAlive             = defaults.HTTPKeepAlive
 	HTTPReaderDefaultConnectTimeout        = defaults.HTTPConnectTimeout
@@ -65,7 +65,9 @@ var (
 	HTTPReaderDefaultIdleConnTimeout       = defaults.HTTPIdleConnTimeout
 	HTTPReaderDefaultMaxIdleConns          = 100
 	HTTPReaderDefaultMaxIdleConnsPerHost   = 10
-	HTTPReaderDefaultMaxConnsPerHost       = 0
+	// HTTPReaderDefaultMaxConnsPerHost is 0 (unbounded per net/http);
+	// the response body itself is bounded by HTTPResponseBodyLimit.
+	HTTPReaderDefaultMaxConnsPerHost = 0
 )
 
 // HTTPReaderOption defines a configuration option for HTTPReader.
@@ -303,15 +305,6 @@ func (r *HTTPReader) apply() {
 	tr.TLSClientConfig.InsecureSkipVerify = *r.InsecureSkipVerify
 }
 
-// Read fetches data from the specified URL and returns it as a byte slice.
-// The request is bounded by the HTTPReader's TotalTimeout.
-// Use ReadWithContext for caller-controlled cancellation.
-func (r *HTTPReader) Read(url string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), *r.TotalTimeout)
-	defer cancel()
-	return r.ReadWithContext(ctx, url)
-}
-
 // ReadWithContext fetches data from the specified URL and returns it as a byte slice.
 // The request is bound to the provided context for cancellation and deadlines.
 // Callers must provide a non-nil context.
@@ -342,21 +335,18 @@ func (r *HTTPReader) ReadWithContext(ctx context.Context, url string) ([]byte, e
 		return nil, errors.New(errors.ErrCodeUnavailable, fmt.Sprintf("failed to fetch data: status %s", resp.Status))
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	// Bound the response body to prevent OOM from a hostile or buggy server.
+	limited := io.LimitReader(resp.Body, defaults.HTTPResponseBodyLimit+1)
+	data, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, errors.Wrap(errors.ErrCodeInternal, "failed to read response body", err)
 	}
+	if int64(len(data)) > defaults.HTTPResponseBodyLimit {
+		return nil, errors.New(errors.ErrCodeInvalidRequest,
+			fmt.Sprintf("response body exceeds limit of %d bytes", defaults.HTTPResponseBodyLimit))
+	}
 
 	return data, nil
-}
-
-// Download reads data from the specified URL and writes it to the given file path.
-// The request is bounded by the HTTPReader's TotalTimeout.
-// Use DownloadWithContext for caller-controlled cancellation.
-func (r *HTTPReader) Download(url, filePath string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), *r.TotalTimeout)
-	defer cancel()
-	return r.DownloadWithContext(ctx, url, filePath)
 }
 
 // DownloadWithContext reads data from the specified URL and writes it to the given file path.
@@ -364,7 +354,10 @@ func (r *HTTPReader) Download(url, filePath string) error {
 func (r *HTTPReader) DownloadWithContext(ctx context.Context, url, filePath string) error {
 	data, err := r.ReadWithContext(ctx, url)
 	if err != nil {
-		return errors.Wrap(errors.ErrCodeUnavailable, fmt.Sprintf("failed to read from url %s", url), err)
+		// ReadWithContext already returns properly-coded errors:
+		// ErrCodeInvalidRequest for oversized bodies, ErrCodeUnavailable
+		// for transport. Preserve the inner code rather than overwriting.
+		return errors.PropagateOrWrap(err, errors.ErrCodeUnavailable, fmt.Sprintf("failed to read from url %s", url))
 	}
 
 	if err := os.WriteFile(filepath.Clean(filePath), data, 0600); err != nil { //nolint:gosec // G703 -- path from caller-provided download target

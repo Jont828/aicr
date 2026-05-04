@@ -151,7 +151,9 @@
 //
 // # Environment Variables
 //
-//	LOG_LEVEL              Set logging verbosity (debug, info, warn, error)
+//	AICR_LOG_LEVEL         Set logging verbosity (debug, info, warn, error)
+//	AICR_LOG_PREFIX        Override the CLI log prefix (default: "cli")
+//	NO_COLOR               Suppress ANSI color codes in CLI logger output
 //	NODE_NAME              Override node name for Kubernetes collection
 //	KUBERNETES_NODE_NAME   Fallback node name if NODE_NAME not set
 //	HOSTNAME               Final fallback for node name

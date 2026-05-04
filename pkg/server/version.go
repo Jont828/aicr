@@ -25,27 +25,40 @@ const (
 )
 
 // negotiateAPIVersion extracts the API version from the Accept header.
-// It supports version negotiation via Accept header like:
-// Accept: application/vnd.nvidia.aicr.v2+json
-// If no version is specified, it returns the default version (v1).
+// It supports version negotiation via the vendor MIME type:
+//
+//	Accept: application/vnd.nvidia.aicr.v2+json
+//
+// Multiple comma-separated media types and parameters (e.g., "; q=0.5") are
+// tolerated. Returns defaultAPIVersion when no recognized vendor type is
+// present.
+const vendorMediaTypePrefix = "application/vnd.nvidia.aicr."
+
 func negotiateAPIVersion(r *http.Request) string {
 	accept := r.Header.Get("Accept")
 	if accept == "" {
 		return defaultAPIVersion
 	}
 
-	// Parse Accept header for custom vendor MIME type
-	// Format: application/vnd.nvidia.aicr.v2+json
-	if strings.Contains(accept, "application/vnd.nvidia.aicr.v") {
-		parts := strings.Split(accept, ".")
-		for i, part := range parts {
-			if strings.HasPrefix(part, "v") && i < len(parts) {
-				// Extract version (e.g., "v2+json" -> "v2")
-				version := strings.Split(part, "+")[0]
-				if isValidAPIVersion(version) {
-					return version
-				}
-			}
+	for _, raw := range strings.Split(accept, ",") {
+		// Strip parameters (e.g., "application/json; q=0.5" → "application/json").
+		mediaType := strings.TrimSpace(raw)
+		if i := strings.Index(mediaType, ";"); i >= 0 {
+			mediaType = strings.TrimSpace(mediaType[:i])
+		}
+		// RFC 7231 §3.1.1.1: media types are case-insensitive.
+		lower := strings.ToLower(mediaType)
+		if !strings.HasPrefix(lower, vendorMediaTypePrefix) {
+			continue
+		}
+		// "application/vnd.nvidia.aicr.v2+json" → "v2+json" → "v2"
+		rest := strings.TrimPrefix(lower, vendorMediaTypePrefix)
+		version := rest
+		if i := strings.Index(rest, "+"); i >= 0 {
+			version = rest[:i]
+		}
+		if isValidAPIVersion(version) {
+			return version
 		}
 	}
 
