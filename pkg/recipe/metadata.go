@@ -603,6 +603,7 @@ func mergeComponentRef(base, overlay ComponentRef) ComponentRef {
 		for _, f := range overlay.ManifestFiles {
 			if !seen[f] {
 				result.ManifestFiles = append(result.ManifestFiles, f)
+				seen[f] = true
 			}
 		}
 	}

@@ -497,6 +497,22 @@ func TestMergeComponentRef_AdvancedFields(t *testing.T) {
 		}
 	})
 
+	t.Run("manifestFiles dedup within overlay", func(t *testing.T) {
+		base := ComponentRef{
+			Name:          "test",
+			ManifestFiles: []string{"a.yaml"},
+		}
+		overlay := ComponentRef{
+			Name:          "test",
+			ManifestFiles: []string{"b.yaml", "b.yaml"},
+		}
+		result := mergeComponentRef(base, overlay)
+		want := []string{"a.yaml", "b.yaml"}
+		if !reflect.DeepEqual(result.ManifestFiles, want) {
+			t.Errorf("manifestFiles = %v, want %v", result.ManifestFiles, want)
+		}
+	})
+
 	t.Run("tag from overlay", func(t *testing.T) {
 		base := ComponentRef{Name: "test", Tag: "v1.0"}
 		overlay := ComponentRef{Name: "test", Tag: "v2.0"}
