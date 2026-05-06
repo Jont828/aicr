@@ -20,13 +20,13 @@ languages:
 # Build Tools
 build_tools:
   # renovate: datasource=github-releases depName=goreleaser/goreleaser depType=build_tools
-  goreleaser: 'v2.15.3'
+  goreleaser: 'v2.15.4'
   # renovate: datasource=github-releases depName=ko-build/ko depType=build_tools
-  ko: 'v0.18.0'
+  ko: 'v0.18.1'
   # renovate: datasource=github-releases depName=google/go-containerregistry depType=build_tools
-  crane: 'v0.21.0'
+  crane: 'v0.21.5'
   # renovate: datasource=github-releases depName=orhun/git-cliff depType=build_tools
-  git_cliff: '2.12.0'
+  git_cliff: '2.13.1'
 
 # Linting
 linting:
