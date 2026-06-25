@@ -1112,7 +1112,7 @@ gopkg.in/inf.v0
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
-# k8s.io/api v0.36.1
+# k8s.io/api v0.36.2
 ## explicit; go 1.26.0
 k8s.io/api/admissionregistration/v1
 k8s.io/api/admissionregistration/v1alpha1
@@ -1181,7 +1181,7 @@ k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset
 k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/scheme
 k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/typed/apiextensions/v1
 k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/typed/apiextensions/v1beta1
-# k8s.io/apimachinery v0.36.1
+# k8s.io/apimachinery v0.36.2
 ## explicit; go 1.26.0
 k8s.io/apimachinery/pkg/api/equality
 k8s.io/apimachinery/pkg/api/errors
@@ -1251,7 +1251,7 @@ k8s.io/apiserver/pkg/cel
 k8s.io/apiserver/pkg/cel/library
 k8s.io/apiserver/pkg/features
 k8s.io/apiserver/pkg/util/feature
-# k8s.io/client-go v0.36.1
+# k8s.io/client-go v0.36.2
 ## explicit; go 1.26.0
 k8s.io/client-go/applyconfigurations
 k8s.io/client-go/applyconfigurations/admissionregistration/v1
@@ -1624,7 +1624,7 @@ k8s.io/kube-openapi/pkg/validation/strfmt/bson
 ## explicit; go 1.26.0
 k8s.io/kubernetes/pkg/apis/core
 k8s.io/kubernetes/pkg/apis/core/helper
-# k8s.io/utils v0.0.0-20260507154919-ff6756f316d2
+# k8s.io/utils v0.0.0-20260617174310-a95e086a2553
 ## explicit; go 1.23
 k8s.io/utils/buffer
 k8s.io/utils/clock
