@@ -14,7 +14,7 @@ This is a **different axis** from the per-recipe **Coverage** column in the reci
 
 | Item | Exercised by | Hardware | Cadence | Status | Notes |
 |------|--------------|----------|---------|--------|-------|
-| `cuj1-training-kubeflow` | chainsaw, uat, demo | GPU (H100, real) | nightly | covered | — |
+| `cuj1-training-kubeflow` | chainsaw, demo | simulated / none | per-PR | covered | — |
 | `cuj2-inference-dynamo` | demo | GPU (unwired) | — | stubbed | UAT assets present but no scheduled workflow runs them — inference UAT tracked by DC3 (#1276), Azure by DC6 (#1280) |
 
 ## CLI verbs
