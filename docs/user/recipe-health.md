@@ -34,8 +34,8 @@ The matrix is computed **hermetically and offline**: every signal is a pure read
 {/* BEGIN AICR-HEALTH */}
 ## Summary
 
-- Recipes: **39**
-- Pass: **39** · Warn: **0** · Fail: **0** · Unknown: **0**
+- Recipes: **42**
+- Pass: **42** · Warn: **0** · Fail: **0** · Unknown: **0**
 
 ## Recipes
 
@@ -46,6 +46,7 @@ The matrix is computed **hermetically and offline**: every signal is a pure read
 | gb200-any | — | gb200 | — | — | — | pass | R:0 D:4 P:0 C:0 | pending |
 | h100-any | — | h100 | — | — | — | pass | R:0 D:4 P:0 C:0 | pending |
 | h200-any | — | h200 | — | — | — | pass | R:0 D:4 P:0 C:0 | pending |
+| l40s-any | — | l40s | — | — | — | pass | R:0 D:4 P:0 C:0 | pending |
 | rtx-pro-6000-any | — | rtx-pro-6000 | — | — | — | pass | R:0 D:4 P:0 C:0 | pending |
 | monitoring-hpa | — | — | — | — | — | pass | R:0 D:0 P:0 C:0 | pending |
 | a100-aks-ubuntu-training-kubeflow | aks | a100 | ubuntu | training | kubeflow | pass | R:0 D:4 P:0 C:10 | pending |
@@ -80,5 +81,7 @@ The matrix is computed **hermetically and offline**: every signal is a pure read
 | a100-oke-ubuntu-training-kubeflow | oke | a100 | ubuntu | training | kubeflow | pass | R:0 D:4 P:0 C:8 | pending |
 | gb200-oke-ubuntu-inference-dynamo | oke | gb200 | ubuntu | inference | dynamo | pass | R:0 D:4 P:1 C:10 | pending |
 | gb200-oke-ubuntu-training-kubeflow | oke | gb200 | ubuntu | training | kubeflow | pass | R:0 D:4 P:1 C:8 | pending |
+| l40s-oke-inference | oke | l40s | ol | inference | — | pass | R:0 D:4 P:0 C:8 | pending |
+| l40s-oke-training | oke | l40s | ol | training | — | pass | R:0 D:4 P:0 C:8 | pending |
 
 {/* END AICR-HEALTH */}
