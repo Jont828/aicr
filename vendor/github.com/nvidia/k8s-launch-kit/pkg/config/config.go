@@ -17,6 +17,7 @@
 package config
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/binary"
 	"fmt"
@@ -38,6 +39,13 @@ import (
 //go:embed default-config.yaml
 var defaultConfigYAML []byte
 
+// DefaultConfigYAML returns a copy of the embedded default configuration
+// source. Discovery uses it to preserve field comments when no filesystem
+// override is selected. The copy is safe for callers to mutate.
+func DefaultConfigYAML() []byte {
+	return bytes.Clone(defaultConfigYAML)
+}
+
 // DefaultLaunchKitConfig returns a freshly-parsed copy of the binary's
 // embedded default configuration. Returned value is safe to mutate; each call
 // re-parses to avoid sharing pointers between callers.
@@ -49,6 +57,18 @@ func DefaultLaunchKitConfig() (*LaunchKitConfig, error) {
 	var cfg LaunchKitConfig
 	if err := yaml.Unmarshal(defaultConfigYAML, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse embedded default l8k-config: %w", err)
+	}
+	if cfg.Profile != nil && cfg.Profile.SpectrumX != nil {
+		if err := NormalizeSpectrumXProfileConfig(cfg.Profile.SpectrumX); err != nil {
+			return nil, fmt.Errorf("invalid embedded spectrum-x profile config: %w", err)
+		}
+	}
+	if err := NormalizeMaintenance(&cfg); err != nil {
+		return nil, fmt.Errorf("invalid embedded maintenance config: %w", err)
+	}
+	cfg.Validation = NormalizeValidationConfig(cfg.Validation)
+	if err := ValidateValidationConfig(cfg.Validation); err != nil {
+		return nil, fmt.Errorf("invalid embedded validation config: %w", err)
 	}
 	return &cfg, nil
 }
@@ -70,6 +90,11 @@ const GPULabelKey = "nvidia.kubernetes-launch-kit.gpu"
 
 // MaxLabelValueLength is the Kubernetes hard limit for label values.
 const MaxLabelValueLength = 63
+
+const (
+	RoutingDestinationBased = "destination-based"
+	RoutingSourceBased      = "source-based"
+)
 
 // MachineLabelValue returns the per-source-group machine label value:
 // `<machineType>-<gpuType>` literal when it fits Kubernetes' 63-char
@@ -132,43 +157,45 @@ func SanitizeIdentifier(s string) string {
 
 // LaunchKitConfig represents the l8k-config.yaml structure
 type LaunchKitConfig struct {
-	NetworkOperator *NetworkOperatorConfig `yaml:"networkOperator,omitempty"`
-	DOCADriver      *DOCADriverConfig      `yaml:"docaDriver,omitempty"`
-	NvIpam          *NvIpamConfig          `yaml:"nvIpam,omitempty"`
-	Sriov           *SriovConfig           `yaml:"sriov,omitempty"`
-	Hostdev         *HostdevConfig         `yaml:"hostdev,omitempty"`
-	RdmaShared      *RdmaSharedConfig      `yaml:"rdmaShared,omitempty"`
-	Ipoib           *IpoibConfig           `yaml:"ipoib,omitempty"`
-	Macvlan         *MacvlanConfig         `yaml:"macvlan,omitempty"`
+	NetworkOperator          *NetworkOperatorConfig          `yaml:"networkOperator,omitempty"`
+	DOCADriver               *DOCADriverConfig               `yaml:"docaDriver,omitempty"`
+	Maintenance              *MaintenanceConfig              `yaml:"maintenance,omitempty"`
+	NvIpam                   *NvIpamConfig                   `yaml:"nvIpam,omitempty"`
+	Sriov                    *SriovConfig                    `yaml:"sriov,omitempty"`
+	Hostdev                  *HostdevConfig                  `yaml:"hostdev,omitempty"`
+	RdmaShared               *RdmaSharedConfig               `yaml:"rdmaShared,omitempty"`
+	Ipoib                    *IpoibConfig                    `yaml:"ipoib,omitempty"`
+	Macvlan                  *MacvlanConfig                  `yaml:"macvlan,omitempty"`
 	SpectrumX                *SpectrumXConfig                `yaml:"spectrumX,omitempty"`
 	NicConfigurationOperator *NicConfigurationOperatorConfig `yaml:"nicConfigurationOperator,omitempty"`
-	PodNamespace             string                          `yaml:"podNamespace,omitempty"`
 	// NetworkNamespaces is the set of namespaces the secondary-network CRs
 	// (SriovNetwork, SriovIBNetwork, HostDeviceNetwork, MacvlanNetwork,
 	// IPoIBNetwork) and their example test DaemonSets are rendered into —
 	// one independent copy per namespace. Shared resources (IPPool,
 	// NicNodePolicy, SriovNetworkNodePolicy, NicClusterPolicy, …) are NOT
-	// duplicated. Empty defaults to a single "default" namespace; a legacy
-	// scalar podNamespace is folded in as the sole entry. PodNamespace stays
-	// the "current" namespace scalar the templates read — the renderer
-	// overrides it per entry while fanning out.
-	NetworkNamespaces        []string                        `yaml:"networkNamespaces,omitempty"`
-	Workload                 *WorkloadConfig                 `yaml:"workload,omitempty"`
-	Profile         *Profile               `yaml:"profile,omitempty"`
-	ClusterConfig   []ClusterConfig        `yaml:"clusterConfig,omitempty"`
+	// duplicated. Empty defaults to a single "default" namespace.
+	NetworkNamespaces []string `yaml:"networkNamespaces,omitempty"`
+	// CurrentNetworkNamespace is transient render state. The renderer sets it
+	// to one NetworkNamespaces entry while producing that namespace's copy;
+	// it is never part of the persisted configuration schema.
+	CurrentNetworkNamespace string            `yaml:"-"`
+	Workload                *WorkloadConfig   `yaml:"workload,omitempty"`
+	Validation              *ValidationConfig `yaml:"validation,omitempty"`
+	Profile                 *Profile          `yaml:"profile,omitempty"`
+	ClusterConfig           []ClusterConfig   `yaml:"clusterConfig,omitempty"`
 }
 
 type NetworkOperatorConfig struct {
-	Version          string   `yaml:"version"`
-	ComponentVersion string   `yaml:"componentVersion"`
+	Version          string `yaml:"version"`
+	ComponentVersion string `yaml:"componentVersion"`
 	// SelectedRelease is the catalog key (MAJOR.MINOR, e.g. "26.4") chosen via
 	// --network-operator-release. Empty means "no release pinned"; templates
 	// treat that as "latest" so existing configs render the newest gates by
 	// default. When non-empty, ApplyOptionsToConfig has already populated
 	// Version/ComponentVersion/Repository and DOCADriver.Version from the
 	// embedded catalog.
-	SelectedRelease  string   `yaml:"selectedRelease,omitempty"`
-	Repository       string   `yaml:"repository"`
+	SelectedRelease string `yaml:"selectedRelease,omitempty"`
+	Repository      string `yaml:"repository"`
 	// OperatorRepository is the registry path for the network-operator
 	// BINARY image itself, distinct from Repository (which is the
 	// COMPONENT-images registry rendered into NicClusterPolicy /
@@ -187,11 +214,11 @@ type NetworkOperatorConfig struct {
 }
 
 type DOCADriverConfig struct {
-	Enable                      bool `yaml:"enable"`
+	Enable                      bool   `yaml:"enable"`
 	Version                     string `yaml:"version"`
-	UnloadStorageModules        bool `yaml:"unloadStorageModules"`
-	EnableNFSRDMA               bool `yaml:"enableNFSRDMA"`
-	UnloadThirdPartyRDMAModules bool `yaml:"unloadThirdPartyRDMAModules"`
+	UnloadStorageModules        bool   `yaml:"unloadStorageModules"`
+	EnableNFSRDMA               bool   `yaml:"enableNFSRDMA"`
+	UnloadThirdPartyRDMAModules bool   `yaml:"unloadThirdPartyRDMAModules"`
 	// SkipPreflightChecks controls the init container's module dependency check.
 	// When false (l8k default), the check runs and any blocking dependency fails
 	// the init container, preventing MOFED load. When true, the check is skipped
@@ -283,11 +310,206 @@ type WorkloadConfig struct {
 	Manifest string `yaml:"manifest,omitempty"`
 }
 
+const (
+	ValidationModeQuick  = "quick"
+	ValidationModeFull   = "full"
+	ValidationModeStrict = "strict"
+
+	ValidationCheckICMP      = "icmp"
+	ValidationCheckRPing     = "rping"
+	ValidationCheckIBWriteBW = "ib_write_bw"
+
+	DefaultValidationRPingIterations = 5
+	DefaultValidationIBWriteSize     = 65536
+	DefaultValidationIBWriteMinGbps  = 100
+)
+
+// ValidationConfig controls `l8k validate` data-plane checks. Static manifest
+// and version checks always run; Connectivity gates the example-DaemonSet RDMA
+// matrix. Checks selects which RDMA families to run.
+type ValidationConfig struct {
+	Connectivity *bool                 `yaml:"connectivity,omitempty"`
+	Mode         string                `yaml:"mode,omitempty"`
+	Checks       []string              `yaml:"checks,omitempty"`
+	RDMA         *ValidationRDMAConfig `yaml:"rdma,omitempty"`
+}
+
+type ValidationRDMAConfig struct {
+	RPingIterations         int      `yaml:"rpingIterations,omitempty"`
+	IBWriteSize             int      `yaml:"ibWriteSize,omitempty"`
+	IBWriteMinBandwidthGbps *float64 `yaml:"ibWriteMinBandwidthGbps,omitempty"`
+}
+
+func defaultBool(v bool) *bool {
+	return &v
+}
+
+func defaultFloat64(v float64) *float64 {
+	return &v
+}
+
+func DefaultValidationConfig() *ValidationConfig {
+	return &ValidationConfig{
+		Connectivity: defaultBool(true),
+		Mode:         ValidationModeStrict,
+		Checks:       []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW},
+		RDMA: &ValidationRDMAConfig{
+			RPingIterations:         DefaultValidationRPingIterations,
+			IBWriteSize:             DefaultValidationIBWriteSize,
+			IBWriteMinBandwidthGbps: defaultFloat64(DefaultValidationIBWriteMinGbps),
+		},
+	}
+}
+
+func NormalizeValidationConfig(v *ValidationConfig) *ValidationConfig {
+	if v == nil {
+		return DefaultValidationConfig()
+	}
+	if v.Connectivity == nil {
+		v.Connectivity = defaultBool(true)
+	}
+	v.Mode = strings.TrimSpace(v.Mode)
+	if v.Mode == "" {
+		v.Mode = ValidationModeStrict
+	}
+	if v.Checks == nil {
+		v.Checks = []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}
+	} else {
+		v.Checks = NormalizeValidationChecks(v.Checks)
+	}
+	if v.RDMA == nil {
+		v.RDMA = &ValidationRDMAConfig{}
+	}
+	if v.RDMA.RPingIterations <= 0 {
+		v.RDMA.RPingIterations = DefaultValidationRPingIterations
+	}
+	if v.RDMA.IBWriteSize <= 0 {
+		v.RDMA.IBWriteSize = DefaultValidationIBWriteSize
+	}
+	if v.RDMA.IBWriteMinBandwidthGbps == nil {
+		v.RDMA.IBWriteMinBandwidthGbps = defaultFloat64(DefaultValidationIBWriteMinGbps)
+	}
+	return v
+}
+
+func NormalizeValidationChecks(checks []string) []string {
+	if checks == nil {
+		return nil
+	}
+	out := make([]string, 0, len(checks))
+	seen := map[string]bool{}
+	for _, check := range checks {
+		check = strings.TrimSpace(check)
+		if check == "" || seen[check] {
+			continue
+		}
+		seen[check] = true
+		out = append(out, check)
+	}
+	return out
+}
+
+func ValidateValidationConfig(v *ValidationConfig) error {
+	if v == nil {
+		return nil
+	}
+	switch v.Mode {
+	case "", ValidationModeQuick, ValidationModeFull, ValidationModeStrict:
+	default:
+		return fmt.Errorf("validation.mode must be one of: %s, %s, %s",
+			ValidationModeQuick, ValidationModeFull, ValidationModeStrict)
+	}
+	if v.RDMA != nil && v.RDMA.IBWriteMinBandwidthGbps != nil && *v.RDMA.IBWriteMinBandwidthGbps < 0 {
+		return fmt.Errorf("validation.rdma.ibWriteMinBandwidthGbps must be greater than or equal to 0")
+	}
+	for _, check := range v.Checks {
+		switch check {
+		case ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW:
+		default:
+			return fmt.Errorf("validation.checks contains unsupported check %q (supported: %s, %s, %s)",
+				check, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW)
+		}
+	}
+	return nil
+}
+
 type Profile struct {
-	Fabric     string            `yaml:"fabric"`
-	Deployment string            `yaml:"deployment"`
-	Multirail  bool              `yaml:"multirail"`
-	SpectrumX  *ProfileSpectrumX `yaml:"spectrumX,omitempty"`
+	Fabric     string `yaml:"fabric"`
+	Deployment string `yaml:"deployment"`
+	Multirail  bool   `yaml:"multirail"`
+	// Routing controls whether generated secondary-network CRs chain the CNI
+	// source-based routing meta-plugin. destination-based preserves the kernel's
+	// normal destination route lookup. source-based adds the automatic sbr plugin
+	// after IPAM/tuning so each pod source address selects its matching rail.
+	Routing string `yaml:"routing,omitempty"`
+	// IgnoreARP controls whether generated secondary-network CRs chain the tuning
+	// meta-plugin to make ARP ownership interface-local. This prevents a pod rail
+	// from answering ARP for an IP that belongs to another rail.
+	IgnoreARP bool `yaml:"ignoreARP,omitempty"`
+	// IgnoreARPSet records whether ignoreARP was present in the source YAML.
+	// This lets config rewrites preserve an explicit `ignoreARP: false`.
+	IgnoreARPSet bool `yaml:"-"`
+	// MultirailSet records whether multirail was present in the source YAML.
+	// It is transient so the public YAML shape stays unchanged. The resolver
+	// needs this bit to distinguish an omitted value (eligible for the true
+	// default) from an explicit `multirail: false` (which must be preserved).
+	// Programmatic callers that need an explicit false can set both fields.
+	MultirailSet bool              `yaml:"-"`
+	SpectrumX    *ProfileSpectrumX `yaml:"spectrumX,omitempty"`
+}
+
+// UnmarshalYAML preserves whether the multirail key was present. A plain bool
+// cannot otherwise distinguish an omitted value from an explicit false, which
+// would make a discover -> save -> discover round trip change user intent.
+func (p *Profile) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var raw struct {
+		Fabric     string            `yaml:"fabric"`
+		Deployment string            `yaml:"deployment"`
+		Multirail  *bool             `yaml:"multirail"`
+		Routing    string            `yaml:"routing,omitempty"`
+		IgnoreARP  *bool             `yaml:"ignoreARP,omitempty"`
+		SpectrumX  *ProfileSpectrumX `yaml:"spectrumX,omitempty"`
+	}
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+
+	*p = Profile{
+		Fabric:     raw.Fabric,
+		Deployment: raw.Deployment,
+		Routing:    raw.Routing,
+		SpectrumX:  raw.SpectrumX,
+	}
+	if raw.Multirail != nil {
+		p.Multirail = *raw.Multirail
+		p.MultirailSet = true
+	}
+	if raw.IgnoreARP != nil {
+		p.IgnoreARP = *raw.IgnoreARP
+		p.IgnoreARPSet = true
+	}
+	return nil
+}
+
+func (p Profile) MarshalYAML() (interface{}, error) {
+	var raw struct {
+		Fabric     string            `yaml:"fabric"`
+		Deployment string            `yaml:"deployment"`
+		Multirail  bool              `yaml:"multirail"`
+		Routing    string            `yaml:"routing,omitempty"`
+		IgnoreARP  *bool             `yaml:"ignoreARP,omitempty"`
+		SpectrumX  *ProfileSpectrumX `yaml:"spectrumX,omitempty"`
+	}
+	raw.Fabric = p.Fabric
+	raw.Deployment = p.Deployment
+	raw.Multirail = p.Multirail
+	raw.Routing = p.Routing
+	raw.SpectrumX = p.SpectrumX
+	if p.IgnoreARP || p.IgnoreARPSet {
+		ignoreARP := p.IgnoreARP
+		raw.IgnoreARP = &ignoreARP
+	}
+	return raw, nil
 }
 
 type ProfileSpectrumX struct {
@@ -295,33 +517,36 @@ type ProfileSpectrumX struct {
 	SPCXVersion    string `yaml:"spcxVersion"`    // e.g., "RA2.2"
 	MultiplaneMode string `yaml:"multiplaneMode"` // swplb, hwplb, uniplane
 	NumberOfPlanes int    `yaml:"numberOfPlanes"` // 2 or 4
+	UseDRA         bool   `yaml:"useDRA"`         // enable DRA ResourceClaimTemplate-based workload allocation
+	ConfigMapName  string `yaml:"configMapName,omitempty"`
+	Profile        string `yaml:"profile,omitempty"`
 }
 
 type ClusterConfig struct {
-	Identifier           string               `yaml:"identifier"`
-	MachineType          string               `yaml:"machineType,omitempty"`
-	GPUType          string               `yaml:"gpuType,omitempty"`
+	Identifier  string `yaml:"identifier"`
+	MachineType string `yaml:"machineType,omitempty"`
+	GPUType     string `yaml:"gpuType,omitempty"`
 	// LinkType is the fabric type discovered for the group's east-west PFs:
 	// "Ethernet" or "InfiniBand". Set only when *every* east-west PF probe
 	// returns a confirmed verdict (port ACTIVE + matching link_layer + for
 	// IB, a non-zero sm_lid) and the verdicts agree. Otherwise omitted —
 	// the discovery couldn't prove the cluster is using a specific fabric,
 	// and downstream code should treat the field's absence as "unknown".
-	LinkType             string               `yaml:"linkType,omitempty"`
-	PresetApplied        bool                 `yaml:"presetApplied,omitempty"`
+	LinkType      string `yaml:"linkType,omitempty"`
+	PresetApplied bool   `yaml:"presetApplied,omitempty"`
 	// PresetDeviation lists discrepancies between the matched preset and
 	// the cluster's actually-discovered hardware. When non-empty, the
 	// preset was applied (so rail/NUMA topology fields are populated) but
 	// the cluster differs from the certified configuration. l8k re-warns
 	// every time the config is loaded.
-	PresetDeviation []PresetDeviationEntry `yaml:"presetDeviation,omitempty"`
-	Capabilities         *ClusterCapabilities `yaml:"capabilities"`
-	PFs                  []PFConfig           `yaml:"pfs"`
-	WorkerNodes          []string             `yaml:"workerNodes"`
-	NodeSelector         map[string]string    `yaml:"nodeSelector,omitempty"`
-	ThirdPartyRDMAModules []string            `yaml:"thirdPartyRDMAModules,omitempty"`
-	StorageModules        []string            `yaml:"storageModules,omitempty"`
-	RailPciAddresses     [][]string           `yaml:"-"` // Transient: per-rail merged PCI addresses (not serialized)
+	PresetDeviation       []PresetDeviationEntry `yaml:"presetDeviation,omitempty"`
+	Capabilities          *ClusterCapabilities   `yaml:"capabilities"`
+	PFs                   []PFConfig             `yaml:"pfs"`
+	WorkerNodes           []string               `yaml:"workerNodes"`
+	NodeSelector          map[string]string      `yaml:"nodeSelector,omitempty"`
+	ThirdPartyRDMAModules []string               `yaml:"thirdPartyRDMAModules,omitempty"`
+	StorageModules        []string               `yaml:"storageModules,omitempty"`
+	RailPciAddresses      [][]string             `yaml:"-"` // Transient: per-rail merged PCI addresses (not serialized)
 	// MergedIdentifier is the bucket-level identifier shared by all source
 	// groups that merge together by (gpuType, railCount). Used in templates
 	// for shared-resource references (resourceName, networkName, poolName,
@@ -377,9 +602,10 @@ type PFConfig struct {
 	// VPD.
 	Model string `yaml:"model,omitempty"`
 	// Topology fields (populated from presets when available)
-	NumaNode     *int   `yaml:"numaNode,omitempty"`
-	ConnectedGPU string `yaml:"connectedGPU,omitempty"`
-	GPUProximity string `yaml:"gpuProximity,omitempty"`
+	NumaNode               *int   `yaml:"numaNode,omitempty"`
+	ConnectedGPU           string `yaml:"connectedGPU,omitempty"`
+	ConnectedGPUPCIAddress string `yaml:"connectedGPUPCIAddress,omitempty"`
+	GPUProximity           string `yaml:"gpuProximity,omitempty"`
 }
 
 // AggregateCapabilities computes the union of capabilities across all cluster config groups.
@@ -403,35 +629,52 @@ func AggregateCapabilities(groups []ClusterConfig) *ClusterCapabilities {
 // that does not exist remains an error (a typo'd --user-config should NOT
 // silently fall back to defaults).
 func LoadFullConfig(configPath string, logger logr.Logger) (*LaunchKitConfig, error) {
+	cfg, _, err := LoadFullConfigWithSource(configPath, logger)
+	return cfg, err
+}
+
+// LoadFullConfigWithSource loads and normalizes the same configuration as
+// LoadFullConfig and also returns the exact YAML bytes that were parsed. The
+// source snapshot lets in-place writers preserve comments without reading the
+// file a second time.
+func LoadFullConfigWithSource(configPath string, logger logr.Logger) (*LaunchKitConfig, []byte, error) {
 	if configPath == "" {
 		logger.Info("Loading embedded default l8k-config (no path provided)")
 		cfg, err := DefaultLaunchKitConfig()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		// emitPresetDeviationWarnings is a no-op for defaults (no
 		// ClusterConfig entries yet) but kept for shape parity.
 		emitPresetDeviationWarnings(cfg, logger)
-		return cfg, nil
+		return cfg, DefaultConfigYAML(), nil
 	}
 
 	logger.Info("Loading cluster configuration", "path", configPath)
 
 	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("cluster config file does not exist: %s", configPath)
+		return nil, nil, fmt.Errorf("cluster config file does not exist: %s", configPath)
 	}
 
 	// Read the configuration file
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read cluster config file %s: %w", configPath, err)
+		return nil, nil, fmt.Errorf("failed to read cluster config file %s: %w", configPath, err)
 	}
 
 	// Parse the YAML configuration
 	var config LaunchKitConfig
 	if err := yaml.Unmarshal(configData, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse cluster config YAML %s: %w", configPath, err)
+		return nil, nil, fmt.Errorf("failed to parse cluster config YAML %s: %w", configPath, err)
+	}
+	if config.Profile != nil && config.Profile.SpectrumX != nil {
+		if err := NormalizeSpectrumXProfileConfig(config.Profile.SpectrumX); err != nil {
+			return nil, nil, fmt.Errorf("invalid spectrum-x profile config in %s: %w", configPath, err)
+		}
+	}
+	if err := NormalizeMaintenance(&config); err != nil {
+		return nil, nil, fmt.Errorf("invalid maintenance config in %s: %w", configPath, err)
 	}
 
 	logger.Info("Cluster configuration loaded successfully",
@@ -439,22 +682,27 @@ func LoadFullConfig(configPath string, logger logr.Logger) (*LaunchKitConfig, er
 		"namespace", config.NetworkOperator.Namespace)
 
 	if err := validateNvIpam(config.NvIpam); err != nil {
-		return nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
+		return nil, nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
+	}
+	config.Validation = NormalizeValidationConfig(config.Validation)
+	if err := ValidateValidationConfig(config.Validation); err != nil {
+		return nil, nil, fmt.Errorf("invalid validation config in %s: %w", configPath, err)
 	}
 
 	// Finalize exclusions for explicitly-listed (manual) subnets. Auto-generated
-	// subnets are finalized in the render path after GenerateSubnets. l8k never
-	// rewrites nvIpam back to disk, so this runs exactly once per load.
+	// subnets are finalized in the render path after GenerateSubnets. Config
+	// write-back restores the source nvIpam form, so exclusions are applied once
+	// per load without accumulating in the file.
 	if config.NvIpam != nil && len(config.NvIpam.Subnets) > 0 {
 		if err := ApplyReservedExclusions(
 			config.NvIpam.Subnets, config.NvIpam.ReserveFirstIPs, config.NvIpam.ReserveLastIPs); err != nil {
-			return nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
+			return nil, nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
 		}
 	}
 
 	emitPresetDeviationWarnings(&config, logger)
 
-	return &config, nil
+	return &config, configData, nil
 }
 
 // emitPresetDeviationWarnings logs a warning for every group whose config
@@ -487,6 +735,12 @@ func emitPresetDeviationWarnings(cfg *LaunchKitConfig, logger logr.Logger) {
 
 // ValidateClusterConfig validates that essential fields are present in the cluster config
 func ValidateClusterConfig(config *LaunchKitConfig, profile string) error {
+	// Public callers may construct a config directly instead of using
+	// LoadFullConfig. Normalize again here so validation covers both paths.
+	if err := NormalizeMaintenance(config); err != nil {
+		return err
+	}
+
 	if config.NetworkOperator.Repository == "" {
 		return fmt.Errorf("networkOperator.repository is required")
 	}
@@ -531,7 +785,7 @@ func ValidateClusterConfig(config *LaunchKitConfig, profile string) error {
 // SupportedSPCXVersions lists the Spectrum-X RA versions for which l8k can
 // emit non-`none` multiplane configurations. RA2.1 ships on Network Operator
 // 26.1; RA2.2 on 26.4+. Order is preserved in error messages.
-var SupportedSPCXVersions = []string{"RA2.1", "RA2.2"}
+var SupportedSPCXVersions = []string{"RA2.1", "RA2.2", "RA2.3"}
 
 // SupportedMultiplaneModes lists the Spectrum-X multiplane modes the CLI
 // accepts. `none` and `uniplane` collapse to one plane; `swplb` and `hwplb`
@@ -552,6 +806,7 @@ var SupportedNumberOfPlanes = []int{1, 2, 4}
 var SPCXVersionAllowedReleases = map[string][]string{
 	"RA2.1": {"26.1"},
 	"RA2.2": {"26.4"},
+	"RA2.3": {"26.7"},
 }
 
 // DefaultSPCXReleaseFor returns the canonical (first-listed) Network
@@ -591,7 +846,7 @@ func validateSpectrumXTemplates(config *LaunchKitConfig) error {
 
 	isMultiplane := config.Profile.SpectrumX.NumberOfPlanes > 1
 	isMultirail := config.Profile.Multirail
-	
+
 	// Check netdevPrefix (accept both %plane%/%rail% and %plane_id%/%rail_id%)
 	hasPlaneInNetdev := containsPlaceholder(netdevPrefix, "%plane%") || containsPlaceholder(netdevPrefix, "%plane_id%")
 	hasRailInNetdev := containsPlaceholder(netdevPrefix, "%rail%") || containsPlaceholder(netdevPrefix, "%rail_id%")
@@ -615,7 +870,7 @@ func validateSpectrumXTemplates(config *LaunchKitConfig) error {
 	if isMultirail && !hasRailInRdma {
 		return fmt.Errorf("spectrumX.rdmaPrefix must contain %%rail_id%% placeholder when multirail is enabled")
 	}
-	
+
 	return nil
 }
 

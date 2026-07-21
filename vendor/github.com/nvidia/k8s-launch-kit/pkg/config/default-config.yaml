@@ -4,7 +4,7 @@ networkOperator:
   # version/componentVersion/repository/operatorRepository/helmRepoURL (below)
   # and docaDriver.version are populated from the embedded catalog;
   # explicit values here are overridden.
-  # Supported: 25.10, 26.1, 26.4. Leave empty to use the explicit values
+  # Supported: 25.10, 26.1, 26.4, 26.7. Leave empty to use the explicit values
   # below as-is.
   # selectedRelease: "26.4"
   version: v26.4.0
@@ -28,10 +28,30 @@ networkOperator:
   # imagePullSecrets:
   #   - my-registry-secret
 
-podNamespace: default
+networkNamespaces: [default]
 
 # workload:
 #   manifest: /path/to/my-deployment.yaml  # Custom workload manifest (replaces default example DaemonSet)
+
+validation:
+  # connectivity gates the data-plane validation stage. Static manifest,
+  # Helm release, component-version, and preflight checks always run.
+  connectivity: true
+  # mode controls matrix coverage and gating.
+  # quick: same-rail all nodes plus one non-gating cross-rail canary per rail pair.
+  # full: every source rail x every destination rail per ordered pod pair; cross-rail is non-gating.
+  # strict: full matrix; cross-rail gates according to profile.routing.
+  mode: strict
+  # checks selects which data-plane test families l8k validate runs.
+  # Supported: icmp, rping, ib_write_bw. Use [] to disable all connectivity checks.
+  checks:
+    - icmp
+    - rping
+    - ib_write_bw
+  rdma:
+    rpingIterations: 5
+    ibWriteSize: 65536
+    ibWriteMinBandwidthGbps: 100
 
 docaDriver:
   enable: true
@@ -40,6 +60,16 @@ docaDriver:
   enableNFSRDMA: false
   unloadThirdPartyRDMAModules: true
   skipPreflightChecks: false
+
+maintenance:
+  # Global concurrency; positive integer or 1%-100%.
+  maxParallelOperations: 4
+  # Global or legacy SR-IOV limit; non-negative integer or 1%-100%.
+  maxUnavailable: 4
+  # Ready-request cleanup delay in seconds; non-negative.
+  maxNodeMaintenanceTimeSeconds: 3600
+  # Legacy OFED concurrency; non-negative, 0 is unlimited.
+  maxParallelUpgrades: 4
 
 nvIpam:
   poolName: nv-ipam-pool
@@ -111,15 +141,24 @@ spectrumX:
   rdmaPrefix: "roce_p%plane_id%_r%rail_id%"
   netdevPrefix: "eth_p%plane_id%_r%rail_id%"
 
+# This reference profile is used as-is when the file is passed explicitly via
+# --user-config. A fresh `l8k discover` ignores these example values, derives
+# missing settings from discovered hardware, and writes the resolved profile.
 profile:
   fabric: ethernet # infiniband, ethernet TODO consider ETH/IB
   deployment: sriov # rdma_shared, sriov, host_device
-  multirail: false
+  multirail: false # explicit false is preserved; omit the key to use the true default
+  routing: destination-based # destination-based, source-based. source-based chains the automatic sbr CNI meta-plugin. Not applied to Spectrum-X.
+  ignoreARP: false # true chains tuning CNI sysctls to prevent ARP flux across pod rails. Not applied to Spectrum-X.
   spectrumX: # Spectrum-X configuration (set enable: true or use --spectrum-x CLI flag)
     enable: false # CLI parameter (overrides this value): --spectrum-x
-    spcxVersion: "RA2.2" # CLI parameter (overrides this value): --spcx-version
-    multiplaneMode: swplb # CLI parameter (overrides this value): --multiplane-mode (swplb, hwplb, uniplane)
-    numberOfPlanes: 4 # CLI parameter (overrides this value): --number-of-planes, also used as pfsPerNic
+    # spcxVersion: "RA2.3" # CLI parameter (overrides this value): --spectrum-x
+    # multiplaneMode: swplb # CLI parameter (overrides this value): --multiplane-mode (swplb, hwplb, uniplane)
+    # numberOfPlanes: 4 # CLI parameter (overrides this value): --number-of-planes, also used as pfsPerNic
+    # configMapName: "site-ra23-profile" # Required for RA2.3 when profile is raw data.profile YAML; CLI: --spectrum-x-configmap-name
+    # profile: | # Required for RA2.3; accepts raw data.profile YAML or a full ConfigMap YAML. CLI: --spectrum-x-config
+    #   useSoftwareCCAlgorithm: true
+    useDRA: false # Enables DRA ResourceClaimTemplate-based Spectrum-X workload allocation
   ai: false
 
 clusterConfig:
