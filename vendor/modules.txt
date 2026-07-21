@@ -627,8 +627,9 @@ github.com/monochromegane/go-gitignore
 # github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
 ## explicit
 github.com/munnerz/goautoneg
-# github.com/nvidia/k8s-launch-kit v0.0.0-20260626110858-4789ead7f64c
+# github.com/nvidia/k8s-launch-kit v0.0.0-20260713111738-0507f25caee7
 ## explicit; go 1.26.2
+github.com/nvidia/k8s-launch-kit/pkg/assets
 github.com/nvidia/k8s-launch-kit/pkg/config
 github.com/nvidia/k8s-launch-kit/pkg/kubeclient
 github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/discovery
@@ -959,14 +960,14 @@ golang.org/x/oauth2/jwt
 golang.org/x/sync/errgroup
 golang.org/x/sync/semaphore
 golang.org/x/sync/singleflight
-# golang.org/x/sys v0.46.0
+# golang.org/x/sys v0.47.0
 ## explicit; go 1.25.0
 golang.org/x/sys/cpu
 golang.org/x/sys/plan9
 golang.org/x/sys/unix
 golang.org/x/sys/windows
 golang.org/x/sys/windows/registry
-# golang.org/x/term v0.44.0
+# golang.org/x/term v0.45.0
 ## explicit; go 1.25.0
 golang.org/x/term
 # golang.org/x/text v0.38.0
