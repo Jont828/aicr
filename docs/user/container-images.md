@@ -20,16 +20,16 @@ A machine-readable **CycloneDX 1.6 JSON** companion to this page is produced by 
 ## Summary
 
 - Components: **33**
-- Unique images: **82**
-- Distinct registries: **11**
+- Unique images: **81**
+- Distinct registries: **10**
 
-Registries: `602401143452.dkr.ecr.us-west-2.amazonaws.com`, `cr.agentgateway.dev`, `docker.io`, `gcr.io`, `ghcr.io`, `gke.gcr.io`, `nvcr.io`, `public.ecr.aws`, `quay.io`, `registry.k8s.io`, `us-docker.pkg.dev`
+Registries: `602401143452.dkr.ecr.us-west-2.amazonaws.com`, `docker.io`, `gcr.io`, `ghcr.io`, `gke.gcr.io`, `nvcr.io`, `public.ecr.aws`, `quay.io`, `registry.k8s.io`, `us-docker.pkg.dev`
 
 ## Components
 
 | Component | Type | Chart | Pinned Version | Images |
 |-----------|------|-------|----------------|--------|
-| agentgateway | helm | agentgateway | v2.2.1 | 1 |
+| agentgateway | helm | agentgateway | v2.2.1 | 0 |
 | agentgateway-crds | helm | agentgateway-crds | v2.2.1 | 0 |
 | aws-ebs-csi-driver | helm | aws-ebs-csi-driver/aws-ebs-csi-driver | 2.59.0 | 6 |
 | aws-efa | helm | aws-efa-k8s-device-plugin | v0.5.29 | 1 |
@@ -67,9 +67,13 @@ Registries: `602401143452.dkr.ecr.us-west-2.amazonaws.com`, `cr.agentgateway.dev
 
 ### agentgateway
 
-- `cr.agentgateway.dev/controller:v2.2.1`
+> Warning: [INTERNAL] helm template failed: exit status 1
+
+_No images extracted._
 
 ### agentgateway-crds
+
+> Warning: [INTERNAL] helm template failed: exit status 1
 
 _No images extracted._
 
